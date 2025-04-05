@@ -1,0 +1,107 @@
+{
+  "data": {
+    "dataset_dir": "./data/processed",
+    "dataset_name": "bootstrapped_dataset.pkl",
+    "label_dict_name": "bootstrapped_label_dict.json",
+    "train_split": 0.8,
+    "val_split": 0.1,
+    "test_split": 0.1,
+    "batch_size": 32,
+    "num_workers": 4,
+    "pin_memory": true,
+    "shuffle": true,
+    "class_resample_size": 200,
+    "img_size": 224,
+    "proportion": null,
+    "use_medical_transforms": true,
+    "intensity_normalization": {
+      "enabled": false,
+      "method": null,
+      "class_specific": {
+        "enabled": false,
+        "T1": null,
+        "T2": null,
+        "FLAIR": null,
+        "T1FL": null,
+        "T2FL": null,
+        "CT1": null,
+        "CT2": null,
+        "SWI": null,
+        "DWI": null,
+        "PER": null
+      }
+    }
+  },
+  "model": {
+    "img_encoder": {
+      "name": "resnet50",
+      "pretrained": true,
+      "freeze_backbone": false,
+      "weights_path": null,
+      "output_dim": 512,
+      "use_radimagenet": false
+    },
+    "txt_encoder": {
+      "name": "distilbert-base-uncased",
+      "freeze_backbone": false,
+      "max_length": 128,
+      "output_dim": 256
+    },
+    "num_encoder": {
+      "hidden_dim": 64,
+      "output_dim": 32,
+      "num_layers": 2,
+      "dropout": 0.2
+    },
+    "fusion": {
+      "method": "concat",
+      "hidden_size": 512
+    },
+    "classifier": {
+      "hidden_dims": [256, 128],
+      "dropout": 0.2
+    },
+    "init_num_modalities": null
+  },
+  "training": {
+    "num_epochs": 100,
+    "optimizer": {
+      "name": "adam",
+      "lr": 1e-5,
+      "weight_decay": 1e-6
+    },
+    "scheduler": {
+      "name": "cosine",
+      "params": {
+        "warmup_epochs": 5
+      }
+    },
+    "early_stopping": {
+      "patience": 10,
+      "min_delta": 0.001
+    },
+    "loss": {
+      "type": "weighted_ce",
+      "threshold": 0.0
+    },
+    "mixed_precision": true,
+    "gradient_accumulation_steps": 1,
+    "class_weights": "balanced"
+  },
+  "logging": {
+    "log_dir": "./logs",
+    "tensorboard": true,
+    "save_model_dir": "./saved_models",
+    "log_interval": 10,
+    "wandb": {
+      "enabled": true,
+      "project": "mr-sequence-classification",
+      "entity": null,
+      "name": null,
+      "tags": [],
+      "notes": null
+    }
+  },
+  "seed": 11121,
+  "config_num": 0
+}

@@ -1,0 +1,9 @@
+{
+  "model.img_encoder.name": ["resnet50", "densenet121"],
+  "model.txt_encoder.name": ["distilbert-base-uncased"],
+  "model.fusion.method": ["concat", "attention"],
+  "data.batch_size": [32],
+  "training.optimizer.lr": [1e-5],
+  "data.intensity_normalization.enabled": [false, true],
+  "data.intensity_normalization.method": [null, "zscore"]
+}
