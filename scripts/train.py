@@ -1,4 +1,4 @@
-import os
+
 import json
 import argparse
 import time
@@ -23,6 +23,7 @@ from utils.visualize import plot_training_curves, plot_confusion_matrix, plot_pe
 from utils.loss import get_loss_function
 from utils.data_loader import create_datasets, create_dataloaders, get_class_weights
 from models.classifier import get_classifier
+
 
 def train_epoch(
         model: nn.Module,
@@ -173,172 +174,6 @@ def train_epoch(
 
         # Compute metrics
         metrics = compute_metrics(all_preds, all_targets, model.num_classes if not threshold > 0.0 else None)
-
-    # Add loss to metrics
-    metrics["loss"] = running_loss / len(dataloader)
-
-    # Log to TensorBoard
-    if writer is not None:
-        for metric_name, metric_value in metrics.items():
-            writer.add_scalar(f"train/{metric_name}", metric_value, epoch)
-
-    return metricsimport
-    os
-
-
-import json
-import argparse
-import time
-from pathlib import Path
-from datetime import datetime
-from typing import Dict, Any, List, Tuple, Optional, Union
-
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader
-import torch.nn.functional as F
-from torch.cuda.amp import GradScaler, autocast
-from torch.utils.tensorboard import SummaryWriter
-
-# Import wandb for experiment tracking
-import wandb
-
-from utils.io import read_json_config, ensure_dir, save_model, save_json
-from utils.metrics import compute_metrics, compute_hierarchical_metrics, EarlyStopping
-from utils.visualize import plot_training_curves, plot_confusion_matrix, plot_per_class_metrics
-from utils.loss import get_loss_function
-from data_loader import create_datasets, create_dataloaders, get_class_weights
-from models.classifier import get_classifier
-
-
-def train_epoch(
-        model: nn.Module,
-        dataloader: DataLoader,
-        optimizer: optim.Optimizer,
-        loss_fn: nn.Module,
-        scaler: GradScaler,
-        device: torch.device,
-        config: Dict[str, Any],
-        epoch: int,
-        writer: Optional[SummaryWriter] = None,
-        hierarchical: bool = False
-) -> Dict[str, float]:
-    """
-    Train the model for one epoch.
-
-    Args:
-        model: Model to train
-        dataloader: Training data loader
-        optimizer: Optimizer
-        loss_fn: Loss function
-        scaler: Gradient scaler for mixed precision training
-        device: Device to train on
-        config: Training configuration
-        epoch: Current epoch number
-        writer: TensorBoard writer
-        hierarchical: Whether using hierarchical classification
-
-    Returns:
-        Dictionary with training metrics
-    """
-    model.train()
-    running_loss = 0.0
-    all_preds = []
-    all_targets = []
-
-    # For hierarchical training
-    task_preds = {} if hierarchical else None
-    task_targets = {} if hierarchical else None
-
-    # Progress tracking
-    log_interval = config["logging"]["log_interval"]
-    total_batches = len(dataloader)
-    start_time = time.time()
-
-    for batch_idx, batch in enumerate(dataloader):
-        # Move batch to device
-        img = batch["img"].to(device)
-        input_ids = batch["input_ids"].to(device)
-        attention_mask = batch["attention_mask"].to(device)
-        numerical_attributes = batch["numerical_attributes"].to(device)
-
-        if hierarchical:
-            # For hierarchical model, labels are a dictionary
-            targets = {task: batch[task].to(device) for task in batch if task != "img" and task != "input_ids"
-                       and task != "attention_mask" and task != "numerical_attributes"}
-        else:
-            # For standard model, label is a single tensor
-            targets = batch["label"].to(device)
-
-        # Zero gradients
-        optimizer.zero_grad()
-
-        # Mixed precision training
-        with autocast(enabled=config["training"]["mixed_precision"]):
-            # Forward pass
-            outputs = model(
-                img=img,
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                numerical_attributes=numerical_attributes
-            )
-
-            # Compute loss
-            if hierarchical:
-                # Sum losses from all tasks
-                loss = sum([loss_fn(outputs[task], targets[task]) for task in outputs])
-
-                # Store predictions and targets for metrics
-                for task in outputs:
-                    if task not in task_preds:
-                        task_preds[task] = []
-                        task_targets[task] = []
-                    task_preds[task].append(outputs[task].detach().cpu())
-                    task_targets[task].append(targets[task].detach().cpu())
-            else:
-                loss = loss_fn(outputs, targets)
-                all_preds.append(outputs.detach().cpu())
-                all_targets.append(targets.detach().cpu())
-
-        # Backward pass with gradient scaling
-        scaler.scale(loss).backward()
-
-        # Gradient accumulation
-        if (batch_idx + 1) % config["training"]["gradient_accumulation_steps"] == 0:
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad()
-
-        # Update running loss
-        running_loss += loss.item()
-
-        # Log progress
-        if (batch_idx + 1) % log_interval == 0:
-            elapsed_time = time.time() - start_time
-            examples_per_sec = (batch_idx + 1) * dataloader.batch_size / elapsed_time
-
-            print(f"Epoch {epoch} [{batch_idx + 1}/{total_batches}] - "
-                  f"Loss: {running_loss / (batch_idx + 1):.4f}, "
-                  f"Examples/sec: {examples_per_sec:.1f}")
-
-    # Compute metrics
-    if hierarchical:
-        # Concatenate predictions and targets for each task
-        for task in task_preds:
-            task_preds[task] = torch.cat(task_preds[task], 0)
-            task_targets[task] = torch.cat(task_targets[task], 0)
-
-        # Compute hierarchical metrics
-        num_classes = {task: model.num_classes[task] for task in task_preds}
-        metrics = compute_hierarchical_metrics(task_preds, task_targets, num_classes)
-    else:
-        # Concatenate predictions and targets
-        all_preds = torch.cat(all_preds, 0)
-        all_targets = torch.cat(all_targets, 0)
-
-        # Compute metrics
-        metrics = compute_metrics(all_preds, all_targets, model.num_classes)
 
     # Add loss to metrics
     metrics["loss"] = running_loss / len(dataloader)
@@ -729,15 +564,37 @@ def get_scheduler(
         raise ValueError(f"Unsupported scheduler: {scheduler_name}")
 
 
-def train(config_path: str):
+import os
+import json
+import torch
+import numpy as np
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, Any
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from torch.cuda.amp import GradScaler, autocast
+from torch.utils.tensorboard import SummaryWriter
+import wandb
+
+from utils.io import read_json_config, ensure_dir, save_model, save_json
+from utils.metrics import compute_metrics, compute_hierarchical_metrics, EarlyStopping
+from utils.visualize import plot_training_curves, plot_confusion_matrix, plot_per_class_metrics
+from utils.loss import get_loss_function
+from utils.data_loader import create_datasets, create_dataloaders, get_class_weights
+from models.classifier import get_classifier
+
+def train(config: dict):
     """
     Train and evaluate a model based on the provided configuration.
 
     Args:
-        config_path: Path to the configuration file
+        config: Dict including configuration param
     """
-    # Load configuration
-    config = read_json_config(config_path)
+    # WandB login (should be done once per run)
+    wandb.login()
+
 
     # Set random seed for reproducibility
     torch.manual_seed(config["seed"])
@@ -749,21 +606,18 @@ def train(config_path: str):
     output_dir = Path(config["logging"]["save_model_dir"]) / f"run_{timestamp}_config{config['config_num']}"
     ensure_dir(output_dir)
 
-    # Save configuration
+    # Save configuration for reproducibility
     save_json(config, str(output_dir / "config.json"))
 
-    # Initialize Weights & Biases
+    # Initialize Weights & Biases if enabled
     wandb_config = config["logging"].get("wandb", {})
     use_wandb = wandb_config.get("enabled", False)
-
     if use_wandb:
-        # Initialize wandb
         wandb_run_name = wandb_config.get("name", f"run_{timestamp}_config{config['config_num']}")
         wandb_project = wandb_config.get("project", "mr-sequence-classification")
         wandb_entity = wandb_config.get("entity")
         wandb_tags = wandb_config.get("tags", [])
         wandb_notes = wandb_config.get("notes")
-
         wandb.init(
             project=wandb_project,
             entity=wandb_entity,
@@ -773,28 +627,22 @@ def train(config_path: str):
             notes=wandb_notes,
             dir=str(output_dir)
         )
+        # Optionally: wandb.save("*.py")
 
-        # Log code files for reproducibility (optional)
-        # wandb.save("*.py")
-
-    # Check if CUDA is available
+    # Check device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     # Determine if hierarchical classification is used
-    hierarchical = False  # Set to True if you want hierarchical classification
+    hierarchical = False  # Change to True if needed
 
-    # Create datasets
+    # Create datasets and dataloaders
     datasets, label_dict, hierarchical_dicts, num_normalizer = create_datasets(config, hierarchical)
-
-    # Create dataloaders
     dataloaders = create_dataloaders(datasets, config)
 
     # Prepare model
     num_classes = len(label_dict)
     num_features = len(datasets["train"][0]["numerical_attributes"])
-
-    # Create model
     model = get_classifier(
         config["model"],
         num_classes=num_classes,
@@ -808,54 +656,38 @@ def train(config_path: str):
     print(model)
     print(f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
 
-    # Get class counts for OVR loss or class weights
+    # Compute class counts for loss configuration
     class_counts = []
     for cls in range(num_classes):
         count = sum(1 for i in range(len(datasets["train"])) if datasets["train"][i]["label"] == cls)
         class_counts.append(count)
 
-    # Get loss function configuration
+    # Setup loss function
     loss_config = config["training"].get("loss", {"type": "weighted_ce"})
     loss_type = loss_config.get("type", "weighted_ce")
     threshold = loss_config.get("threshold", 0.0)
-
-    # Setup loss function
     if loss_type == "ovr":
-        # One-vs-Rest loss
         loss_fn = get_loss_function("ovr", num_classes, class_counts)
         print(f"Using OVR loss with threshold {threshold}")
     elif loss_type == "weighted_ce" or config["training"]["class_weights"] == "balanced":
-        # Get balanced class weights
-        class_weights = get_class_weights(datasets["train"], num_classes, method="balanced")
-        class_weights = class_weights.to(device)
+        class_weights = get_class_weights(datasets["train"], num_classes, method="balanced").to(device)
         loss_fn = get_loss_function("weighted_ce", num_classes, class_weights=class_weights)
         print(f"Using weighted cross-entropy loss with class weights")
     else:
-        # Standard cross-entropy
         loss_fn = get_loss_function("ce", num_classes)
         print("Using standard cross-entropy loss")
 
-    # Setup optimizer
+    # Setup optimizer and scheduler
     optimizer = get_optimizer(model, config["training"]["optimizer"])
+    scheduler = get_scheduler(optimizer, config["training"]["scheduler"], config["training"]["num_epochs"])
 
-    # Setup scheduler
-    scheduler = get_scheduler(
-        optimizer,
-        config["training"]["scheduler"],
-        config["training"]["num_epochs"]
-    )
-
-    # Setup early stopping
+    # Setup early stopping, gradient scaler, and TensorBoard writer
     early_stopping = EarlyStopping(
         patience=config["training"]["early_stopping"]["patience"],
         min_delta=config["training"]["early_stopping"]["min_delta"],
         mode="max"
     )
-
-    # Setup gradient scaler for mixed precision training
     scaler = GradScaler(enabled=config["training"]["mixed_precision"])
-
-    # Setup TensorBoard writer
     writer = None
     if config["logging"]["tensorboard"]:
         writer_dir = Path(config["logging"]["log_dir"]) / timestamp
@@ -871,11 +703,9 @@ def train(config_path: str):
     val_metrics_history = []
     best_val_metric = 0.0
     best_model_path = output_dir / "best_model.pth"
-
     print(f"Starting training for {num_epochs} epochs...")
 
     for epoch in range(1, num_epochs + 1):
-        # Train for one epoch
         train_metrics = train_epoch(
             model=model,
             dataloader=dataloaders["train"],
@@ -891,7 +721,6 @@ def train(config_path: str):
         )
         train_metrics_history.append(train_metrics)
 
-        # Validate
         val_metrics = validate(
             model=model,
             dataloader=dataloaders["val"],
@@ -905,16 +734,11 @@ def train(config_path: str):
         )
         val_metrics_history.append(val_metrics)
 
-        # Print metrics
         print(f"Epoch {epoch}/{num_epochs}:")
-        print(
-            f"  Train Loss: {train_metrics['loss']:.4f}, Accuracy: {train_metrics['accuracy']:.4f}, F1: {train_metrics['f1']:.4f}")
-        print(
-            f"  Val Loss: {val_metrics['loss']:.4f}, Accuracy: {val_metrics['accuracy']:.4f}, F1: {val_metrics['f1']:.4f}")
+        print(f"  Train Loss: {train_metrics['loss']:.4f}, Accuracy: {train_metrics['accuracy']:.4f}, F1: {train_metrics['f1']:.4f}")
+        print(f"  Val Loss: {val_metrics['loss']:.4f}, Accuracy: {val_metrics['accuracy']:.4f}, F1: {val_metrics['f1']:.4f}")
 
-        # Log metrics to wandb
         if use_wandb:
-            # Prepare metrics for wandb
             wandb_metrics = {
                 "train/loss": train_metrics["loss"],
                 "train/accuracy": train_metrics["accuracy"],
@@ -922,26 +746,19 @@ def train(config_path: str):
                 "val/loss": val_metrics["loss"],
                 "val/accuracy": val_metrics["accuracy"],
                 "val/f1": val_metrics["f1"],
-                "epoch": epoch
+                "epoch": epoch,
+                "train/learning_rate": optimizer.param_groups[0]["lr"]
             }
-
-            # Add learning rate
-            current_lr = optimizer.param_groups[0]["lr"]
-            wandb_metrics["train/learning_rate"] = current_lr
-
-            # Add additional metrics
+            # Include any additional metrics if present
             for key, value in train_metrics.items():
                 if key not in ["loss", "accuracy", "f1"]:
                     wandb_metrics[f"train/{key}"] = value
-
             for key, value in val_metrics.items():
                 if key not in ["loss", "accuracy", "f1"]:
                     wandb_metrics[f"val/{key}"] = value
-
-            # Log metrics
             wandb.log(wandb_metrics)
 
-        # Update learning rate scheduler
+        # Update scheduler
         if scheduler is not None:
             if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
                 scheduler.step(val_metrics["f1"])
@@ -949,39 +766,27 @@ def train(config_path: str):
                 scheduler.step()
 
         # Check early stopping
-        monitor_metric = val_metrics["f1"]  # Monitor F1 score
+        monitor_metric = val_metrics["f1"]
         is_best, should_stop = early_stopping(monitor_metric)
-
-        # Save the best model
         if is_best:
             print(f"  New best model with F1: {monitor_metric:.4f}")
             best_val_metric = monitor_metric
             save_model(model, best_model_path)
-
-            # Log best metrics to wandb
             if use_wandb:
                 wandb.run.summary["best_val_f1"] = best_val_metric
-
-        # Early stopping
         if should_stop:
             print(f"Early stopping triggered at epoch {epoch}")
             break
 
-    # Plot training curves
+    # Plot and log training curves
     curves_dir = output_dir / "plots"
     ensure_dir(curves_dir)
-    plot_training_curves(
-        train_metrics_history,
-        val_metrics_history,
-        curves_dir
-    )
-
-    # Upload plots to wandb
+    plot_training_curves(train_metrics_history, val_metrics_history, curves_dir)
     if use_wandb:
         for plot_file in curves_dir.glob("*.png"):
             wandb.log({f"plots/{plot_file.name}": wandb.Image(str(plot_file))})
 
-    # Load the best model for evaluation
+    # Load best model for evaluation
     model = get_classifier(
         config["model"],
         num_classes=num_classes,
@@ -992,300 +797,12 @@ def train(config_path: str):
     model.to(device)
     model.load_state_dict(torch.load(best_model_path, map_location=device))
 
-    # Get class names
+    # Get class names for evaluation
     if hierarchical:
-        class_names = {
-            task: list(task_dict.keys()) for task, task_dict in hierarchical_dicts.items()
-        }
+        class_names = {task: list(task_dict.keys()) for task, task_dict in hierarchical_dicts.items()}
     else:
         class_names = list(label_dict.keys())
 
-    # Test the model
-    print("Evaluating best model on test set...")
-    test_metrics = test(
-        model=model,
-        dataloader=dataloaders["test"],
-        device=device,
-        config=config,
-        class_names=class_names,
-        output_dir=output_dir,
-        hierarchical=hierarchical,
-        threshold=threshold
-    )
-
-    # Print test metrics
-    print("Test Results:")
-    for metric_name, metric_value in test_metrics.items():
-        print(f"  {metric_name}: {metric_value:.4f}")
-
-    # Log test metrics to wandb
-    if use_wandb:
-        wandb_test_metrics = {f"test/{k}": v for k, v in test_metrics.items()}
-        wandb.log(wandb_test_metrics)
-
-        # Log confusion matrix to wandb
-        cm_path = output_dir / "confusion_matrix.png"
-        if cm_path.exists():
-            wandb.log({"test/confusion_matrix": wandb.Image(str(cm_path))})
-
-        # Log per-class metrics to wandb
-        per_class_path = output_dir / "per_class_accuracy.png"
-        if per_class_path.exists():
-            wandb.log({"test/per_class_accuracy": wandb.Image(str(per_class_path))})
-
-    # Save normalizer for inference
-    num_normalizer.save(output_dir / "num_normalizer.pth")
-
-    # Save model to wandb
-    if use_wandb:
-        # Save best model as artifact
-        model_artifact = wandb.Artifact(
-            name=f"model-{wandb.run.id}",
-            type="model",
-            description=f"Trained MRI sequence classifier (config {config['config_num']})"
-        )
-        model_artifact.add_file(str(best_model_path))
-        wandb.log_artifact(model_artifact)
-
-        # Finish wandb run
-        wandb.finish()
-
-    # Close TensorBoard writer
-    if writer is not None:
-        writer.close()
-
-    print(f"Training complete. Model saved to {best_model_path}")
-
-    return test_metricsases
-    wandb_config = config["logging"].get("wandb", {})
-    use_wandb = wandb_config.get("enabled", False)
-
-    if use_wandb:
-        # Initialize wandb
-        wandb_run_name = wandb_config.get("name", f"run_{timestamp}_config{config['config_num']}")
-        wandb_project = wandb_config.get("project", "mr-sequence-classification")
-        wandb_entity = wandb_config.get("entity")
-        wandb_tags = wandb_config.get("tags", [])
-        wandb_notes = wandb_config.get("notes")
-
-        wandb.init(
-            project=wandb_project,
-            entity=wandb_entity,
-            name=wandb_run_name,
-            config=config,
-            tags=wandb_tags,
-            notes=wandb_notes,
-            dir=str(output_dir)
-        )
-
-        # Log code files for reproducibility (optional)
-        # wandb.save("*.py")
-
-    # Check if CUDA is available
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
-
-    # Determine if hierarchical classification is used
-    hierarchical = False  # Set to True if you want hierarchical classification
-
-    # Create datasets
-    datasets, label_dict, hierarchical_dicts, num_normalizer = create_datasets(config, hierarchical)
-
-    # Create dataloaders
-    dataloaders = create_dataloaders(datasets, config)
-
-    # Prepare model
-    num_classes = len(label_dict)
-    num_features = len(datasets["train"][0]["numerical_attributes"])
-
-    # Create model
-    model = get_classifier(
-        config["model"],
-        num_classes=num_classes,
-        num_features=num_features,
-        hierarchical=hierarchical,
-        task_classes=hierarchical_dicts if hierarchical else None
-    )
-    model.to(device)
-
-    # Print model summary
-    print(model)
-    print(f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
-
-    # Setup loss function
-    if config["training"]["class_weights"] == "balanced":
-        # Get balanced class weights
-        class_weights = get_class_weights(datasets["train"], num_classes, method="balanced")
-        class_weights = class_weights.to(device)
-        loss_fn = nn.CrossEntropyLoss(weight=class_weights)
-        print(f"Using balanced class weights: {class_weights}")
-    else:
-        loss_fn = nn.CrossEntropyLoss()
-
-    # Setup optimizer
-    optimizer = get_optimizer(model, config["training"]["optimizer"])
-
-    # Setup scheduler
-    scheduler = get_scheduler(
-        optimizer,
-        config["training"]["scheduler"],
-        config["training"]["num_epochs"]
-    )
-
-    # Setup early stopping
-    early_stopping = EarlyStopping(
-        patience=config["training"]["early_stopping"]["patience"],
-        min_delta=config["training"]["early_stopping"]["min_delta"],
-        mode="max"
-    )
-
-    # Setup gradient scaler for mixed precision training
-    scaler = GradScaler(enabled=config["training"]["mixed_precision"])
-
-    # Setup TensorBoard writer
-    writer = None
-    if config["logging"]["tensorboard"]:
-        writer_dir = Path(config["logging"]["log_dir"]) / timestamp
-        writer = SummaryWriter(log_dir=writer_dir)
-
-    # Watch model with wandb
-    if use_wandb:
-        wandb.watch(model, log="all", log_freq=100)
-
-    # Training loop
-    num_epochs = config["training"]["num_epochs"]
-    train_metrics_history = []
-    val_metrics_history = []
-    best_val_metric = 0.0
-    best_model_path = output_dir / "best_model.pth"
-
-    print(f"Starting training for {num_epochs} epochs...")
-
-    for epoch in range(1, num_epochs + 1):
-        # Train for one epoch
-        train_metrics = train_epoch(
-            model=model,
-            dataloader=dataloaders["train"],
-            optimizer=optimizer,
-            loss_fn=loss_fn,
-            scaler=scaler,
-            device=device,
-            config=config,
-            epoch=epoch,
-            writer=writer,
-            hierarchical=hierarchical
-        )
-        train_metrics_history.append(train_metrics)
-
-        # Validate
-        val_metrics = validate(
-            model=model,
-            dataloader=dataloaders["val"],
-            loss_fn=loss_fn,
-            device=device,
-            config=config,
-            epoch=epoch,
-            writer=writer,
-            hierarchical=hierarchical
-        )
-        val_metrics_history.append(val_metrics)
-
-        # Print metrics
-        print(f"Epoch {epoch}/{num_epochs}:")
-        print(
-            f"  Train Loss: {train_metrics['loss']:.4f}, Accuracy: {train_metrics['accuracy']:.4f}, F1: {train_metrics['f1']:.4f}")
-        print(
-            f"  Val Loss: {val_metrics['loss']:.4f}, Accuracy: {val_metrics['accuracy']:.4f}, F1: {val_metrics['f1']:.4f}")
-
-        # Log metrics to wandb
-        if use_wandb:
-            # Prepare metrics for wandb
-            wandb_metrics = {
-                "train/loss": train_metrics["loss"],
-                "train/accuracy": train_metrics["accuracy"],
-                "train/f1": train_metrics["f1"],
-                "val/loss": val_metrics["loss"],
-                "val/accuracy": val_metrics["accuracy"],
-                "val/f1": val_metrics["f1"],
-                "epoch": epoch
-            }
-
-            # Add learning rate
-            current_lr = optimizer.param_groups[0]["lr"]
-            wandb_metrics["train/learning_rate"] = current_lr
-
-            # Add additional metrics
-            for key, value in train_metrics.items():
-                if key not in ["loss", "accuracy", "f1"]:
-                    wandb_metrics[f"train/{key}"] = value
-
-            for key, value in val_metrics.items():
-                if key not in ["loss", "accuracy", "f1"]:
-                    wandb_metrics[f"val/{key}"] = value
-
-            # Log metrics
-            wandb.log(wandb_metrics)
-
-        # Update learning rate scheduler
-        if scheduler is not None:
-            if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
-                scheduler.step(val_metrics["f1"])
-            else:
-                scheduler.step()
-
-        # Check early stopping
-        monitor_metric = val_metrics["f1"]  # Monitor F1 score
-        is_best, should_stop = early_stopping(monitor_metric)
-
-        # Save the best model
-        if is_best:
-            print(f"  New best model with F1: {monitor_metric:.4f}")
-            best_val_metric = monitor_metric
-            save_model(model, best_model_path)
-
-            # Log best metrics to wandb
-            if use_wandb:
-                wandb.run.summary["best_val_f1"] = best_val_metric
-
-        # Early stopping
-        if should_stop:
-            print(f"Early stopping triggered at epoch {epoch}")
-            break
-
-    # Plot training curves
-    curves_dir = output_dir / "plots"
-    ensure_dir(curves_dir)
-    plot_training_curves(
-        train_metrics_history,
-        val_metrics_history,
-        curves_dir
-    )
-
-    # Upload plots to wandb
-    if use_wandb:
-        for plot_file in curves_dir.glob("*.png"):
-            wandb.log({f"plots/{plot_file.name}": wandb.Image(str(plot_file))})
-
-    # Load the best model for evaluation
-    model = get_classifier(
-        config["model"],
-        num_classes=num_classes,
-        num_features=num_features,
-        hierarchical=hierarchical,
-        task_classes=hierarchical_dicts if hierarchical else None
-    )
-    model.to(device)
-    model.load_state_dict(torch.load(best_model_path, map_location=device))
-
-    # Get class names
-    if hierarchical:
-        class_names = {
-            task: list(task_dict.keys()) for task, task_dict in hierarchical_dicts.items()
-        }
-    else:
-        class_names = list(label_dict.keys())
-
-    # Test the model
     print("Evaluating best model on test set...")
     test_metrics = test(
         model=model,
@@ -1297,22 +814,16 @@ def train(config_path: str):
         hierarchical=hierarchical
     )
 
-    # Print test metrics
     print("Test Results:")
     for metric_name, metric_value in test_metrics.items():
         print(f"  {metric_name}: {metric_value:.4f}")
 
-    # Log test metrics to wandb
     if use_wandb:
         wandb_test_metrics = {f"test/{k}": v for k, v in test_metrics.items()}
         wandb.log(wandb_test_metrics)
-
-        # Log confusion matrix to wandb
         cm_path = output_dir / "confusion_matrix.png"
         if cm_path.exists():
             wandb.log({"test/confusion_matrix": wandb.Image(str(cm_path))})
-
-        # Log per-class metrics to wandb
         per_class_path = output_dir / "per_class_accuracy.png"
         if per_class_path.exists():
             wandb.log({"test/per_class_accuracy": wandb.Image(str(per_class_path))})
@@ -1320,9 +831,7 @@ def train(config_path: str):
     # Save normalizer for inference
     num_normalizer.save(output_dir / "num_normalizer.pth")
 
-    # Save model to wandb
     if use_wandb:
-        # Save best model as artifact
         model_artifact = wandb.Artifact(
             name=f"model-{wandb.run.id}",
             type="model",
@@ -1330,17 +839,14 @@ def train(config_path: str):
         )
         model_artifact.add_file(str(best_model_path))
         wandb.log_artifact(model_artifact)
-
-        # Finish wandb run
         wandb.finish()
 
-    # Close TensorBoard writer
     if writer is not None:
         writer.close()
 
     print(f"Training complete. Model saved to {best_model_path}")
-
     return test_metrics
+
 
 
 if __name__ == "__main__":

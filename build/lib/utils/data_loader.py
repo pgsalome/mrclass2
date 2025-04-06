@@ -8,7 +8,7 @@ from typing import Dict, Any, List, Tuple, Optional, Union
 from torch.utils.data import DataLoader, Dataset, random_split
 import torchvision.transforms as transforms
 from sklearn.model_selection import train_test_split
-from collections import Counter
+
 from utils.dataclass import encodedSample, MRISequenceDataset
 from utils.io import load_pickle, read_json_config, ensure_dir
 from models.num_encoder import NumericFeatureNormalizer
@@ -202,20 +202,12 @@ def create_datasets(
     """
     # Load dataset and label dictionary
     dataset, label_dict = load_dataset(config)
-    # If test mode is enabled, filter dataset to only include samples from the two most frequent classes.
+    print("sSSEEFEGWEGWGWGW")
     if config["data"].get("test_mode", False):
+        print('HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH')
         num_samples = config["data"].get("num_samples", 100)
-        # Count frequency of each class label in the dataset
-        labels = [sample.label for sample in dataset]
-        label_counts = Counter(labels)
-        # Get the two classes with the highest frequency
-        top_two = [label for label, count in label_counts.most_common(2)]
-        # Filter dataset to include only samples from these two classes
-        dataset = [sample for sample in dataset if sample.label in top_two]
-        # Optionally, if you want a total of num_samples samples, sample that many from the filtered dataset:
         dataset = dataset[:min(num_samples, len(dataset))]
-        print(f"Test mode enabled: using {len(dataset)} samples from top two classes: {top_two}.")
-
+        print(f"Test mode enabled: using {num_samples} samples from dataset.")
     # Prepare image transforms
     transforms_dict = prepare_transforms(config)
 

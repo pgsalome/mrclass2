@@ -16,4 +16,6 @@ pydicom>=2.2.0
 # Medical imaging specific packages
 monai>=1.0.0
 # Optional for MRI-specific intensity normalization
-intensity-normalization>=0.5.0
+intensity-normalization
+scikit-optimize
+optuna
