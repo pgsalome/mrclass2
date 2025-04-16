@@ -71,23 +71,22 @@ class ImageEncoder(nn.Module):
 
         # Standard torchvision models
         if self.model_name == "resnet18":
-            model = models.resnet18(pretrained=self.pretrained)
-            # Remove the classification head
+            model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT if self.pretrained else None)
             backbone = nn.Sequential(*list(model.children())[:-1])
         elif self.model_name == "resnet34":
-            model = models.resnet34(pretrained=self.pretrained)
+            model = models.resnet34(weights=models.ResNet34_Weights.DEFAULT if self.pretrained else None)
             backbone = nn.Sequential(*list(model.children())[:-1])
         elif self.model_name == "resnet50":
-            model = models.resnet50(pretrained=self.pretrained)
+            model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT if self.pretrained else None)
             backbone = nn.Sequential(*list(model.children())[:-1])
         elif self.model_name == "densenet121":
-            model = models.densenet121(pretrained=self.pretrained)
+            model = models.densenet121(weights=models.DenseNet121_Weights.DEFAULT if self.pretrained else None)
             backbone = nn.Sequential(*list(model.children())[:-1], nn.AdaptiveAvgPool2d((1, 1)))
         elif self.model_name == "efficientnet_b0":
-            model = models.efficientnet_b0(pretrained=self.pretrained)
+            model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT if self.pretrained else None)
             backbone = nn.Sequential(*list(model.children())[:-1])
         elif self.model_name == "mobilenet_v2":
-            model = models.mobilenet_v2(pretrained=self.pretrained)
+            model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT if self.pretrained else None)
             backbone = nn.Sequential(*list(model.children())[:-1])
         else:
             raise ValueError(f"Unsupported model name: {self.model_name}")

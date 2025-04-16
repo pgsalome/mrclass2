@@ -1,6 +1,6 @@
 {
   "data": {
-    "dataset_dir": "/media/e210/portable_hdd/d_sag",
+    "dataset_dir": "/media/e210/portable_hdd/d",
     "dataset_name": "bootstrapped_dataset.pkl",
     "label_dict_name": "bootstrapped_label_dict.json",
     "train_split": 0.8,
@@ -33,12 +33,20 @@
     },
     "test_mode": false,
     "num_samples": 1000,
-
     "use_monai": true,
     "cache_type": "memory",
     "cache_rate": 1.0,
     "cache_num_workers": 4,
-    "persistent_cache_dir": "./persistent_cache"
+    "persistent_cache_dir": "./persistent_cache",
+    "batch": {
+      "size": 64
+    },
+    "intensity": {
+      "normalization": {
+        "enabled": false,
+        "method": "zscore"
+      }
+    }
   },
   "model": {
     "img_encoder": {
@@ -66,17 +74,33 @@
       "hidden_size": 512
     },
     "classifier": {
-      "hidden_dims": [256, 128],
-      "dropout": 0.2
+      "hidden_dims": [
+        256,
+        128
+      ],
+      "dropout": 0.3438257335919588
     },
-    "init_num_modalities": null
+    "init_num_modalities": null,
+    "img": {
+      "encoder": {
+        "name": "resnet50",
+        "freeze": {
+          "backbone": true
+        }
+      }
+    },
+    "txt": {
+      "encoder": {
+        "name": "bert-base-uncased"
+      }
+    }
   },
   "training": {
     "num_epochs": 100,
     "optimizer": {
       "name": "adam",
-      "lr": 1e-5,
-      "weight_decay": 1e-6
+      "lr": 8.411909465645726e-05,
+      "weight_decay": 1e-06
     },
     "scheduler": {
       "name": "cosine",
@@ -99,17 +123,21 @@
   "logging": {
     "log_dir": "./logs",
     "tensorboard": true,
-    "save_model_dir": "/media/e210/portable_hdd/d_sag/saved_models",
+    "save_model_dir": "/media/e210/portable_hdd/d/saved_models",
     "log_interval": 10,
     "wandb": {
       "enabled": true,
       "project": "mrclass2",
       "entity": null,
-      "name": null,
-      "tags": [],
-      "notes": null
+      "name": "optuna_trial_6",
+      "tags": [
+        "optuna",
+        "trial_6"
+      ],
+      "notes": null,
+      "group": "optuna_opt_20250407_010048"
     }
   },
   "seed": 11121,
-  "config_num": 0
+  "config_num": 6
 }

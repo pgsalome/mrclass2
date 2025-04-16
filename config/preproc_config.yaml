@@ -1,0 +1,72 @@
+# Dataset params
+text_attributes:
+  - SeriesDescription
+  - StudyDescription
+  - ProtocolName
+  - ImageType
+  - Manufacturer
+  - ManufacturerModelName
+  - Modality
+  - ScanningSequence
+  - SequenceName
+  - ScanOptions
+  - AngioFlag
+  - ContrastBolusAgent
+  - ContrastBolusRoute
+  - ReceiveCoilName
+
+numerical_attributes:
+  - EchoTime
+  - RepetitionTime
+  - EchoNumbers
+  - InversionTime
+  - MagneticFieldStrength
+  - FlipAngle
+
+missing_term: 'Missing'
+
+ignored_modalities:
+  - CT
+  - CCT
+  - MR
+  - 4DMR
+  - CMR
+  - XA
+  - CBCT
+  - RTDOSE
+  - PT
+  - PETCT
+  - PTCT
+  - OT
+  - PROSMR
+  - SPECTCT
+  - 4DDWI
+
+accepted_axes:
+  - SAG
+  - 3DTRA
+  - 3DCOR
+  - 3DSAG
+
+accepted_anatomies:
+  - HNC
+  - NECK
+
+ignore_4D: false
+ignore_col: true
+orientation: 'SAG' # 'TRA', 'COR', or 'SAG'
+delta: 0.2
+min_modality_count: 2
+seed: 11121
+
+
+# Training params
+epochs: 30
+batch_size: 64
+tokenizer_name: 'bert-base-uncased'
+txt_encoder_name: 'bert-base-uncased'
+
+# Paths
+paths:
+  pycurt_dir: '/media/e210/HD81/GLIOMA/all_pids'
+  dataset_dir: '/media/e210/portable_hdd/d_glioma_sag'

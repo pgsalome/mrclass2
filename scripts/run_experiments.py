@@ -231,16 +231,16 @@ def run_bayesian_optimization(
                 wandb.finish()
 
             # Create a unique run name for this trial
-            config["logging"]["wandb"]["name"] = f"optuna_trial_{trial.number}"
+            config["logging"]["wandb"]["name"] = f"Glioma_Sag_trial_{trial.number}"
 
             # Add group to associate all trials together
-            config["logging"]["wandb"]["group"] = f"optuna_opt_{timestamp}"
+            config["logging"]["wandb"]["group"] = f"Glioma_Sag_opt_{timestamp}"
 
             # Add trial-specific tags
             if "tags" not in config["logging"]["wandb"]:
                 config["logging"]["wandb"]["tags"] = []
 
-            config["logging"]["wandb"]["tags"].extend(["optuna", f"trial_{trial.number}"])
+            config["logging"]["wandb"]["tags"].extend(["Glioma_Sag_", f"trial_{trial.number}"])
 
             # Make sure wandb doesn't try to resume the previous run
             os.environ["WANDB_RESUME"] = "never"
@@ -414,7 +414,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Run MRI sequence classification experiments with Bayesian optimization using Optuna")
     parser.add_argument("--base_config", default="./config/default.json", type=str, help="Path to base config file")
-    parser.add_argument("--output_dir", type=str, default="./config/bayesian_opt",
+    parser.add_argument("--output_dir", type=str, default="./config/bayesian_opt_sag",
                         help="Directory to save experiment configs")
     parser.add_argument("--results_file", type=str, default="logs/bayesian_opt_results.csv",
                         help="Path to save experiment results")

@@ -1,0 +1,22 @@
+{
+  "timestamp": "20250407_010048",
+  "best_score": 0.8933126385874052,
+  "best_parameters": {
+    "model.img.encoder.name": "resnet18",
+    "model.img.encoder.freeze.backbone": false,
+    "model.txt.encoder.name": "distilbert-base-uncased",
+    "model.fusion.method": "attention",
+    "data.batch.size": 32,
+    "training.optimizer.lr": 3.132720057547795e-05,
+    "data.intensity.normalization.enabled": false,
+    "data.intensity.normalization.method_idx": 1,
+    "model.classifier.dropout": 0.16259621209316621
+  },
+  "total_trials": 20,
+  "runtime_info": {
+    "start_time": "20250407_010048",
+    "end_time": "20250410_201928",
+    "n_trials": 20,
+    "random_state": 42
+  }
+}

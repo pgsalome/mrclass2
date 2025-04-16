@@ -1,4 +1,3 @@
-
 import json
 import argparse
 import time
@@ -11,7 +10,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
-from torch.cuda.amp import GradScaler, autocast
+
 from torch.utils.tensorboard import SummaryWriter
 
 # Import wandb for experiment tracking
@@ -23,6 +22,7 @@ from utils.visualize import plot_training_curves, plot_confusion_matrix, plot_pe
 from utils.loss import get_loss_function
 from utils.data_loader import create_datasets, create_dataloaders, get_class_weights
 from models.classifier import get_classifier
+import torch.amp
 
 
 def train_epoch(
@@ -30,7 +30,7 @@ def train_epoch(
         dataloader: DataLoader,
         optimizer: optim.Optimizer,
         loss_fn: nn.Module,
-        scaler: GradScaler,
+        scaler: torch.amp.GradScaler,  # Updated type hint
         device: torch.device,
         config: Dict[str, Any],
         epoch: int,
@@ -90,7 +90,7 @@ def train_epoch(
         optimizer.zero_grad()
 
         # Mixed precision training
-        with autocast(enabled=config["training"]["mixed_precision"]):
+        with torch.amp.autocast('cuda', enabled=config["training"]["mixed_precision"]):
             # Forward pass
             outputs = model(
                 img=img,
@@ -148,12 +148,13 @@ def train_epoch(
         # Update running loss
         running_loss += loss.item()
 
-        # Log progress
-        if (batch_idx + 1) % log_interval == 0:
+        # Log progress with improved formatting
+        if (batch_idx + 1) % log_interval == 0 or (batch_idx + 1) == total_batches:
             elapsed_time = time.time() - start_time
             examples_per_sec = (batch_idx + 1) * dataloader.batch_size / elapsed_time
 
-            print(f"Epoch {epoch} [{batch_idx + 1}/{total_batches}] - "
+            print(f"Epoch {epoch:3d} [{batch_idx + 1:4d}/{total_batches:4d}] "
+                  f"({(batch_idx + 1) / total_batches * 100:5.1f}%) - "
                   f"Loss: {running_loss / (batch_idx + 1):.4f}, "
                   f"Examples/sec: {examples_per_sec:.1f}")
 
@@ -564,27 +565,6 @@ def get_scheduler(
         raise ValueError(f"Unsupported scheduler: {scheduler_name}")
 
 
-import os
-import json
-import torch
-import numpy as np
-from pathlib import Path
-from datetime import datetime
-from typing import Dict, Any
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
-from torch.utils.tensorboard import SummaryWriter
-import wandb
-
-from utils.io import read_json_config, ensure_dir, save_model, save_json
-from utils.metrics import compute_metrics, compute_hierarchical_metrics, EarlyStopping
-from utils.visualize import plot_training_curves, plot_confusion_matrix, plot_per_class_metrics
-from utils.loss import get_loss_function
-from utils.data_loader import create_datasets, create_dataloaders, get_class_weights
-from models.classifier import get_classifier
-
 def train(config: dict):
     """
     Train and evaluate a model based on the provided configuration.
@@ -594,7 +574,6 @@ def train(config: dict):
     """
     # WandB login (should be done once per run)
     wandb.login()
-
 
     # Set random seed for reproducibility
     torch.manual_seed(config["seed"])
@@ -636,9 +615,31 @@ def train(config: dict):
     # Determine if hierarchical classification is used
     hierarchical = False  # Change to True if needed
 
-    # Create datasets and dataloaders
-    datasets, label_dict, hierarchical_dicts, num_normalizer = create_datasets(config, hierarchical)
-    dataloaders = create_dataloaders(datasets, config)
+    # Check for cached objects - this is the key part for using MONAI cache
+    if "_cached_objects" in config:
+        print("Using cached datasets")
+        cached_objects = config["_cached_objects"]
+        datasets = cached_objects["datasets"]
+        label_dict = cached_objects["label_dict"]
+        hierarchical_dicts = cached_objects["hierarchical_dicts"]
+        num_normalizer = cached_objects["num_normalizer"]
+
+        # Create dataloaders from cached datasets
+        dataloaders = create_dataloaders(datasets, config)
+    else:
+        # Original code path - create datasets and dataloaders
+        print("Creating new datasets (no caching between runs)")
+        # Check if MONAI caching should be used within this single run
+        use_monai = config["data"].get("use_monai", True)
+        cache_type = config["data"].get("cache_type", "memory")
+
+        datasets, label_dict, hierarchical_dicts, num_normalizer = create_datasets(
+            config,
+            hierarchical,
+            use_monai=use_monai,
+            cache_type=cache_type
+        )
+        dataloaders = create_dataloaders(datasets, config)
 
     # Prepare model
     num_classes = len(label_dict)
@@ -687,7 +688,7 @@ def train(config: dict):
         min_delta=config["training"]["early_stopping"]["min_delta"],
         mode="max"
     )
-    scaler = GradScaler(enabled=config["training"]["mixed_precision"])
+    scaler = torch.amp.GradScaler('cuda', enabled=config["training"]["mixed_precision"])
     writer = None
     if config["logging"]["tensorboard"]:
         writer_dir = Path(config["logging"]["log_dir"]) / timestamp
@@ -735,8 +736,10 @@ def train(config: dict):
         val_metrics_history.append(val_metrics)
 
         print(f"Epoch {epoch}/{num_epochs}:")
-        print(f"  Train Loss: {train_metrics['loss']:.4f}, Accuracy: {train_metrics['accuracy']:.4f}, F1: {train_metrics['f1']:.4f}")
-        print(f"  Val Loss: {val_metrics['loss']:.4f}, Accuracy: {val_metrics['accuracy']:.4f}, F1: {val_metrics['f1']:.4f}")
+        print(
+            f"  Train Loss: {train_metrics['loss']:.4f}, Accuracy: {train_metrics['accuracy']:.4f}, F1: {train_metrics['f1']:.4f}")
+        print(
+            f"  Val Loss: {val_metrics['loss']:.4f}, Accuracy: {val_metrics['accuracy']:.4f}, F1: {val_metrics['f1']:.4f}")
 
         if use_wandb:
             wandb_metrics = {
@@ -848,10 +851,10 @@ def train(config: dict):
     return test_metrics
 
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train MRI sequence classifier")
     parser.add_argument("--config", type=str, required=True, help="Path to config file")
     args = parser.parse_args()
 
-    train(args.config)
+    config = read_json_config(args.config)
+    train(config)

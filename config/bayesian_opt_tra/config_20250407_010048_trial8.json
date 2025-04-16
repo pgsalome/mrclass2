@@ -33,13 +33,18 @@
     },
     "test_mode": false,
     "num_samples": 1000,
+    "use_monai": true,
+    "cache_type": "memory",
+    "cache_rate": 1.0,
+    "cache_num_workers": 4,
+    "persistent_cache_dir": "./persistent_cache",
     "batch": {
-      "size": 16
+      "size": 32
     },
     "intensity": {
       "normalization": {
-        "enabled": false,
-        "method": "zscore"
+        "enabled": true,
+        "method": "whitestripe"
       }
     }
   },
@@ -65,7 +70,7 @@
       "dropout": 0.2
     },
     "fusion": {
-      "method": "attention",
+      "method": "gated",
       "hidden_size": 512
     },
     "classifier": {
@@ -73,12 +78,12 @@
         256,
         128
       ],
-      "dropout": 0.34474115788895177
+      "dropout": 0.3118602313424026
     },
     "init_num_modalities": null,
     "img": {
       "encoder": {
-        "name": "resnet50",
+        "name": "densenet121",
         "freeze": {
           "backbone": true
         }
@@ -86,7 +91,7 @@
     },
     "txt": {
       "encoder": {
-        "name": "bert-base-uncased"
+        "name": "distilbert-base-uncased"
       }
     }
   },
@@ -94,7 +99,7 @@
     "num_epochs": 100,
     "optimizer": {
       "name": "adam",
-      "lr": 2.310201887845294e-06,
+      "lr": 7.069476197217992e-05,
       "weight_decay": 1e-06
     },
     "scheduler": {
@@ -118,21 +123,21 @@
   "logging": {
     "log_dir": "./logs",
     "tensorboard": true,
-    "save_model_dir": "./saved_models",
+    "save_model_dir": "/media/e210/portable_hdd/d/saved_models",
     "log_interval": 10,
     "wandb": {
       "enabled": true,
       "project": "mrclass2",
       "entity": null,
-      "name": "optuna_trial_0",
+      "name": "optuna_trial_8",
       "tags": [
         "optuna",
-        "trial_0"
+        "trial_8"
       ],
       "notes": null,
-      "group": "optuna_opt_20250406_202928"
+      "group": "optuna_opt_20250407_010048"
     }
   },
   "seed": 11121,
-  "config_num": 0
+  "config_num": 8
 }
