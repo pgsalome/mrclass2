@@ -8,6 +8,8 @@ from typing import Dict, Any, List, Optional
 import pandas as pd
 from datetime import datetime
 import matplotlib.pyplot as plt
+import re
+import glob
 
 # Import Optuna for Bayesian optimization
 import optuna
@@ -21,6 +23,7 @@ from utils.io import read_json_config, ensure_dir, save_json
 from train import train
 
 os.environ["WANDB_DIR"] = "/media/e210/portable_hdd/wandb"
+
 
 # Custom JSON encoder to handle NumPy types
 class NumpyEncoder(json.JSONEncoder):
@@ -173,30 +176,142 @@ def define_study_params(trial: Trial, high_dim: bool = False) -> Dict[str, Any]:
     return params
 
 
-def run_bayesian_optimization(
+def extract_trial_number_from_filename(filename):
+    """Extract trial number from config filename."""
+    match = re.search(r'trial(\d+)\.json$', filename)
+    if match:
+        return int(match.group(1))
+    return -1
+
+
+def extract_suggestions_from_config(config_path):
+    """Extract parameter suggestions from a configuration file."""
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+
+    suggestions = {}
+
+    # Extract model.img.encoder.name
+    if "img" in config["model"] and "encoder" in config["model"]["img"]:
+        suggestions["model.img.encoder.name"] = config["model"]["img"]["encoder"].get("name", "resnet18")
+
+    # Extract model.img.encoder.freeze.backbone
+    if "img" in config["model"] and "encoder" in config["model"]["img"]:
+        suggestions["model.img.encoder.freeze.backbone"] = config["model"]["img"]["encoder"].get("freeze", {}).get(
+            "backbone", False)
+
+    # Extract model.txt.encoder.name
+    if "txt" in config["model"] and "encoder" in config["model"]["txt"]:
+        suggestions["model.txt.encoder.name"] = config["model"]["txt"]["encoder"].get("name", "distilbert-base-uncased")
+
+    # Extract model.fusion.method
+    if "fusion" in config["model"]:
+        suggestions["model.fusion.method"] = config["model"]["fusion"].get("method", "concat")
+
+    # Extract data.batch.size
+    if "batch" in config["data"]:
+        suggestions["data.batch.size"] = config["data"]["batch"].get("size", 32)
+
+    # Extract training.optimizer.lr
+    if "optimizer" in config["training"]:
+        suggestions["training.optimizer.lr"] = config["training"]["optimizer"].get("lr", 1e-5)
+
+    # Extract data.intensity.normalization.enabled
+    if "intensity" in config["data"]:
+        suggestions["data.intensity.normalization.enabled"] = config["data"]["intensity"].get("normalization", {}).get(
+            "enabled", False)
+
+    # Extract data.intensity.normalization.method
+    method = None
+    if "intensity" in config["data"]:
+        method = config["data"]["intensity"].get("normalization", {}).get("method", None)
+
+    # Map method to index
+    methods = ["zscore", "whitestripe", None]
+    if method in methods:
+        suggestions["data.intensity.normalization.method_idx"] = methods.index(method)
+    else:
+        suggestions["data.intensity.normalization.method_idx"] = 2  # Default to None
+
+    # Extract model.classifier.dropout
+    if "classifier" in config["model"]:
+        suggestions["model.classifier.dropout"] = config["model"]["classifier"].get("dropout", 0.2)
+
+    return suggestions
+
+
+def find_completed_trials(output_dir: str) -> tuple:
+    """
+    Find all completed trials in the output directory.
+
+    Args:
+        output_dir: Directory containing configuration files
+
+    Returns:
+        Tuple of (max_trial_number, config_files_dict)
+    """
+    # Find all config files
+    config_files = glob.glob(os.path.join(output_dir, "config_*_trial*.json"))
+
+    # Extract trial numbers and create mapping
+    config_files_dict = {}
+    max_trial_number = -1
+
+    for config_file in config_files:
+        trial_number = extract_trial_number_from_filename(config_file)
+        if trial_number >= 0:
+            config_files_dict[trial_number] = config_file
+            max_trial_number = max(max_trial_number, trial_number)
+
+    return max_trial_number, config_files_dict
+
+
+def load_previous_trials(results_file, trial_numbers):
+    """
+    Load previous trial results from CSV file.
+
+    Args:
+        results_file: Path to CSV with previous results
+        trial_numbers: List of trial numbers to load
+
+    Returns:
+        Dictionary mapping trial numbers to results
+    """
+    if not os.path.exists(results_file):
+        return {}
+
+    results_df = pd.read_csv(results_file)
+
+    # Filter for the specified trial numbers and convert to dictionary
+    trial_results = {}
+    for _, row in results_df.iterrows():
+        if 'trial_number' in row and row['trial_number'] in trial_numbers:
+            trial_results[row['trial_number']] = row.to_dict()
+
+    return trial_results
+
+
+def run_custom_bayesian_optimization(
         base_config: Dict[str, Any],
         output_dir: str,
+        start_trial: int = 0,
         n_trials: int = 20,
         random_state: int = 42,
         results_file: str = "experiment_results.csv",
-        study_name: Optional[str] = None,
-        storage: Optional[str] = None,
-        high_dim: bool = False,
-        n_jobs: int = 1
+        high_dim: bool = False
 ):
     """
-    Run Bayesian optimization for hyperparameter tuning using Optuna.
+    Simpler implementation that explicitly controls trial numbering.
+    This approach bypasses Optuna's automatic trial numbering to ensure consistency.
 
     Args:
         base_config: Base configuration dictionary
         output_dir: Directory to save experiment configurations
-        n_trials: Number of optimization trials
+        start_trial: Trial number to start from
+        n_trials: Total number of trials to run
         random_state: Random seed
         results_file: Path to save experiment results
-        study_name: Name for the Optuna study (for persistence)
-        storage: Storage URL for Optuna (for persistence)
         high_dim: Whether to use high-dimensional search space
-        n_jobs: Number of parallel jobs
     """
     # Ensure output directory exists
     ensure_dir(output_dir)
@@ -204,25 +319,76 @@ def run_bayesian_optimization(
     # Timestamp for unique run identification
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # Initialize results tracking
-    results = []
+    # Check if we need to load previous results
+    resuming = start_trial > 0
+
+    if resuming:
+        print(f"Resuming from trial {start_trial} to {n_trials}.")
+        # Load previous trials to guide the new trials (not strictly necessary)
+        previous_results = []
+        if os.path.exists(results_file):
+            try:
+                previous_df = pd.read_csv(results_file)
+                previous_results = previous_df.to_dict('records')
+
+                # Find best result so far
+                best_f1 = max([r.get('f1', 0) for r in previous_results], default=0)
+                print(f"Loaded {len(previous_results)} previous results. Best F1 so far: {best_f1:.4f}")
+            except Exception as e:
+                print(f"Error loading previous results: {e}")
+                previous_results = []
+    else:
+        print(f"Starting fresh optimization with {n_trials} trials.")
+        previous_results = []
+
+    # List to store new results
+    new_results = []
+
+    # Create a sampler for parameter exploration
+    sampler = optuna.samplers.TPESampler(seed=random_state)
+
+    # Create a study object (but we won't use study.optimize directly)
+    study = optuna.create_study(direction="maximize", sampler=sampler)
+
+    # Initialize tracking variables
     best_score = -np.inf
     best_config = None
     best_params = None
 
-    # Define the objective function for Optuna
-    def objective(trial):
-        nonlocal best_score, best_config, best_params, results
+    # Load previous best score if available
+    if previous_results:
+        for result in previous_results:
+            f1_score = result.get('f1', 0)
+            if f1_score > best_score:
+                best_score = f1_score
+                # Extract parameters from this result
+                params = {k: v for k, v in result.items()
+                          if k.startswith('model.') or k.startswith('data.') or k.startswith('training.')}
+                best_params = params
+
+    # For each trial to run
+    trials_to_run = n_trials - start_trial
+    print(f"Will run {trials_to_run} additional trials (from {start_trial} to {n_trials - 1}).")
+
+    if trials_to_run <= 0:
+        print("No additional trials needed.")
+        return best_config, best_score, new_results
+
+    for trial_num in range(start_trial, n_trials):
+        # Create a trial object
+        trial = optuna.trial.Trial(study, study._storage.create_new_trial(study._study_id))
+
+        print(f"\nTrial {trial_num}/{n_trials - 1}")
 
         # Get parameters for this trial
         params = define_study_params(trial, high_dim)
+        print(f"Parameters: {params}")
 
         # Create a new config with the parameters
         config = update_config_with_params(base_config, params)
 
         # Set config number and modify the wandb settings
-        config_num = len(results)
-        config["config_num"] = config_num
+        config["config_num"] = trial_num
 
         # Modify Wandb configuration for this trial
         if "logging" in config and "wandb" in config["logging"] and config["logging"]["wandb"]["enabled"]:
@@ -231,26 +397,24 @@ def run_bayesian_optimization(
                 wandb.finish()
 
             # Create a unique run name for this trial
-            config["logging"]["wandb"]["name"] = f"Glioma_Sag_trial_{trial.number}"
+            config["logging"]["wandb"]["name"] = f"trial_{trial_num}"
 
             # Add group to associate all trials together
-            config["logging"]["wandb"]["group"] = f"Glioma_Sag_opt_{timestamp}"
+            group_prefix = "resumed_opt" if resuming else "opt"
+            config["logging"]["wandb"]["group"] = f"{group_prefix}_{timestamp}"
 
             # Add trial-specific tags
             if "tags" not in config["logging"]["wandb"]:
                 config["logging"]["wandb"]["tags"] = []
 
-            config["logging"]["wandb"]["tags"].extend(["Glioma_Sag_", f"trial_{trial.number}"])
+            tag_prefix = "resumed_" if resuming else ""
+            config["logging"]["wandb"]["tags"].extend([f"{tag_prefix}optimization", f"trial_{trial_num}"])
 
             # Make sure wandb doesn't try to resume the previous run
             os.environ["WANDB_RESUME"] = "never"
 
-        # Print the configuration
-        print(f"\nOptuna Trial {trial.number + 1}/{n_trials}")
-        print(f"Parameters: {params}")
-
         # Save the configuration
-        config_path = os.path.join(output_dir, f"config_{timestamp}_trial{trial.number}.json")
+        config_path = os.path.join(output_dir, f"config_{timestamp}_trial{trial_num}.json")
         with open(config_path, "w") as f:
             json.dump(config, f, indent=2, cls=NumpyEncoder)
 
@@ -264,8 +428,8 @@ def run_bayesian_optimization(
             # Record the results
             experiment_result = {
                 "timestamp": timestamp,
-                "config_num": config_num,
-                "trial_number": trial.number,
+                "config_num": trial_num,
+                "trial_number": trial_num,
                 "f1": score,
                 "accuracy": metrics.get("accuracy", 0),
                 "precision": metrics.get("precision", 0),
@@ -277,10 +441,19 @@ def run_bayesian_optimization(
             for param_name, param_value in params.items():
                 experiment_result[param_name] = param_value
 
-            results.append(experiment_result)
+            # Add to results list
+            new_results.append(experiment_result)
 
-            # Save results
-            results_df = pd.DataFrame(results)
+            # Save results to CSV
+            if os.path.exists(results_file):
+                # Load existing results and append new ones
+                existing_df = pd.read_csv(results_file)
+                new_df = pd.DataFrame([experiment_result])
+                results_df = pd.concat([existing_df, new_df], ignore_index=True)
+            else:
+                # Create new results file
+                results_df = pd.DataFrame([experiment_result])
+
             results_df.to_csv(results_file, index=False)
 
             # Update best score and config
@@ -296,61 +469,42 @@ def run_bayesian_optimization(
 
                 print(f"New best score: {score:.4f}")
 
-            print(f"Trial {trial.number} completed with F1 score: {score:.4f}")
+            # Tell Optuna about this result for future sampling
+            study.tell(trial, score)
 
+            print(f"Trial {trial_num} completed with F1 score: {score:.4f}")
+
+        except Exception as e:
+            print(f"Error in trial {trial_num}: {str(e)}")
+
+            # Tell Optuna this trial failed
+            study.tell(trial, 0.01)  # Severe penalty
+
+        finally:
             # Ensure wandb run is finished
             if wandb.run is not None:
                 wandb.finish()
 
-            return score
+    # Create a comprehensive report
+    report = {
+        "timestamp": timestamp,
+        "best_score": float(best_score),
+        "best_parameters": best_params,
+        "total_trials": n_trials,
+        "resumed_from_trial": start_trial if resuming else None,
+        "runtime_info": {
+            "start_time": timestamp,
+            "end_time": datetime.now().strftime("%Y%m%d_%H%M%S"),
+            "n_trials": n_trials,
+            "random_state": random_state
+        }
+    }
 
-        except Exception as e:
-            print(f"Error in trial {trial.number}: {str(e)}")
+    with open(os.path.join(output_dir, f"optimization_report_{timestamp}.json"), "w") as f:
+        json.dump(report, f, indent=2, cls=NumpyEncoder)
 
-            # Ensure wandb run is finished even if there's an error
-            if wandb.run is not None:
-                wandb.finish()
-
-            # # More graceful error handling
-            # if "FixedLocator locations" in str(e) or "confusion_matrix" in str(e):
-            #     print("Visualization error, but training may have completed successfully.")
-            #     # Try to recover metrics if possible
-            #     try:
-            #         # Look for metrics in the logs or try to load the model and evaluate
-            #         # This is a placeholder - implement model loading and evaluation logic
-            #         print("Using default penalty for visualization error.")
-            #         return 0.5  # Moderate penalty - Note: Optuna maximizes
-            #     except:
-            #         print("Could not recover metrics. Using larger penalty.")
-            #         return 0.1  # Less severe than complete failure
-
-            # Return a small value for failed trials
-            return 0.01  # Severe penalty
-
-    # Create or load an Optuna study
-    if study_name and storage:
-        # Resume or create a persistent study
-        study = optuna.create_study(
-            study_name=study_name,
-            storage=storage,
-            load_if_exists=True,
-            direction="maximize",
-            sampler=optuna.samplers.TPESampler(seed=random_state)
-        )
-    else:
-        # Create a new study for this run only
-        study = optuna.create_study(
-            direction="maximize",
-            sampler=optuna.samplers.TPESampler(seed=random_state)
-        )
-
-    print(f"Starting Optuna optimization with {n_trials} trials...")
-
-    try:
-        # Run optimization
-        study.optimize(objective, n_trials=n_trials, n_jobs=n_jobs)
-
-        # Generate and save visualizations
+    # Generate visualization if enough trials completed
+    if len(study.trials) > 2:
         try:
             # Plot optimization history
             fig = plot_optimization_history(study)
@@ -363,84 +517,62 @@ def run_bayesian_optimization(
             fig.write_image(os.path.join(output_dir, f"param_importances_{timestamp}.png"))
 
         except Exception as e:
-            print(f"Warning: Could not generate Optuna visualization plots: {e}")
+            print(f"Warning: Could not generate visualization plots: {e}")
 
-        # Get best parameters from the study
-        best_trial = study.best_trial
+    return best_config, best_score, new_results
 
-        # Print and save the best results
-        print("\nOptuna Optimization Results:")
-        print(f"Best F1 score: {best_trial.value:.4f}")
-        print("Best parameters:")
-        for param_name, param_value in best_trial.params.items():
-            print(f"  {param_name}: {param_value}")
 
-        # Create a comprehensive report
-        report = {
-            "timestamp": timestamp,
-            "best_score": float(best_trial.value),
-            "best_parameters": best_trial.params,
-            "total_trials": len(study.trials),
-            "runtime_info": {
-                "start_time": timestamp,
-                "end_time": datetime.now().strftime("%Y%m%d_%H%M%S"),
-                "n_trials": n_trials,
-                "random_state": random_state
-            }
-        }
+def find_last_completed_trial(output_dir: str) -> int:
+    """
+    Find the highest trial number in the output directory.
 
-        with open(os.path.join(output_dir, f"optimization_report_{timestamp}.json"), "w") as f:
-            json.dump(report, f, indent=2, cls=NumpyEncoder)
+    Args:
+        output_dir: Directory containing configuration files
 
-    except KeyboardInterrupt:
-        print("\nOptimization interrupted by user.")
-        print("Saving current best results...")
-
-        # Save what we have so far
-        with open(os.path.join(output_dir, f"interrupted_best_config_{timestamp}.json"), "w") as f:
-            if best_config:
-                json.dump(best_config, f, indent=2, cls=NumpyEncoder)
-            else:
-                json.dump({"status": "interrupted_before_best_found"}, f, indent=2, cls=NumpyEncoder)
-
-    # Ensure all wandb runs are closed
-    if wandb.run is not None:
-        wandb.finish()
-
-    return best_config, best_score, results
+    Returns:
+        Highest trial number found, or -1 if none found
+    """
+    max_trial, _ = find_completed_trials(output_dir)
+    return max_trial
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Run MRI sequence classification experiments with Bayesian optimization using Optuna")
+        description="Run MRI sequence classification experiments with Bayesian optimization")
     parser.add_argument("--base_config", default="./config/default.json", type=str, help="Path to base config file")
-    parser.add_argument("--output_dir", type=str, default="./config/bayesian_opt_sag",
+    parser.add_argument("--output_dir", type=str, default="./config/bayesian_opt_sag_anal",
                         help="Directory to save experiment configs")
-    parser.add_argument("--results_file", type=str, default="logs/bayesian_opt_results.csv",
+    parser.add_argument("--results_file", type=str, default="logs/bayesian_opt_results_anal_sag.csv",
                         help="Path to save experiment results")
     parser.add_argument("--n_trials", type=int, default=20, help="Number of optimization trials")
     parser.add_argument("--random_seed", type=int, default=42, help="Random seed for reproducibility")
-    parser.add_argument("--study_name", type=str, default=None, help="Name for Optuna study (for persistence)")
-    parser.add_argument("--storage", type=str, default=None,
-                        help="Storage URL for Optuna (e.g., 'sqlite:///optuna.db')")
+    parser.add_argument("--start_trial", type=int, default=None,
+                        help="Trial number to start from (if None, auto-detect)")
     parser.add_argument("--high_dim", action="store_true", help="Use high-dimensional search space")
-    parser.add_argument("--n_jobs", type=int, default=1, help="Number of parallel jobs")
     args = parser.parse_args()
 
     # Load base configuration
     base_config = load_base_config(args.base_config)
 
-    # Run Bayesian optimization with Optuna
-    best_config, best_score, results = run_bayesian_optimization(
+    # Determine start trial
+    if args.start_trial is not None:
+        start_trial = args.start_trial
+    else:
+        # Auto-detect the last completed trial
+        last_trial = find_last_completed_trial(args.output_dir)
+        start_trial = last_trial + 1 if last_trial >= 0 else 0
+
+    print(f"Starting from trial {start_trial}")
+
+    # Run custom Bayesian optimization
+    best_config, best_score, results = run_custom_bayesian_optimization(
         base_config=base_config,
         output_dir=args.output_dir,
+        start_trial=start_trial,
         n_trials=args.n_trials,
         random_state=args.random_seed,
         results_file=args.results_file,
-        study_name=args.study_name,
-        storage=args.storage,
-        high_dim=args.high_dim,
-        n_jobs=args.n_jobs
+        high_dim=args.high_dim
     )
 
     print("\nBayesian optimization completed.")

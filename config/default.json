@@ -1,6 +1,6 @@
 {
   "data": {
-    "dataset_dir": "/media/e210/portable_hdd/d_sag",
+    "dataset_dir": "/media/e210/portable_hdd/d_sag_analca",
     "dataset_name": "bootstrapped_dataset.pkl",
     "label_dict_name": "bootstrapped_label_dict.json",
     "train_split": 0.8,
@@ -99,11 +99,11 @@
   "logging": {
     "log_dir": "./logs",
     "tensorboard": true,
-    "save_model_dir": "/media/e210/portable_hdd/d_sag/saved_models",
+    "save_model_dir": "/media/e210/portable_hdd/d_sag_analca_correct/saved_models",
     "log_interval": 10,
     "wandb": {
       "enabled": true,
-      "project": "mrclass2",
+      "project": "mrclass2_analca_sag",
       "entity": null,
       "name": null,
       "tags": [],

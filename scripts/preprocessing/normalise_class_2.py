@@ -6,10 +6,30 @@ import numpy as np
 import random
 from collections import Counter
 from pathlib import Path
-from argparse import ArgumentParser
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from utils.io import read_yaml_config
+
+
+def read_json_config(config_path):
+    """
+    Read JSON configuration file
+
+    Args:
+        config_path: Path to the JSON config file
+
+    Returns:
+        Dict containing configuration parameters
+    """
+    with open(config_path, 'r') as f:
+        config = json.load(f)
+
+    # Convert config dict to an object for dot access if desired
+    class DotDict(dict):
+        __getattr__ = dict.get
+        __setattr__ = dict.__setitem__
+        __delattr__ = dict.__delitem__
+
+    return DotDict(config)
 
 
 def normalize_class_name(label):
@@ -407,48 +427,49 @@ def process_dicom_dataset(dataset_path, label_dict_path, output_dir,
     # Perform bootstrapping for underrepresented classes
     bootstrapped_samples = []
 
-    for class_name in tqdm(classes_to_bootstrap, desc="Bootstrapping classes"):
-        count = size_filtered_counts[class_name]
+    if do_bootstrap:
+        for class_name in tqdm(classes_to_bootstrap, desc="Bootstrapping classes"):
+            count = size_filtered_counts[class_name]
 
-        # Skip classes with enough samples
-        if count >= min_samples:
-            continue
+            # Skip classes with enough samples
+            if count >= min_samples:
+                continue
 
-        # Get indices of samples for this class
-        indices = class_indices[class_name]
+            # Get indices of samples for this class
+            indices = class_indices[class_name]
 
-        # Determine how many more samples we need
-        samples_needed = min_samples - count
+            # Determine how many more samples we need
+            samples_needed = min_samples - count
 
-        # Sample with replacement to create new samples
-        for _ in range(samples_needed):
-            # Choose a random sample from this class
-            idx = random.choice(indices)
-            original_sample = size_filtered_dataset[idx]
+            # Sample with replacement to create new samples
+            for _ in range(samples_needed):
+                # Choose a random sample from this class
+                idx = random.choice(indices)
+                original_sample = size_filtered_dataset[idx]
 
-            # Create a deep copy of the sample
-            if hasattr(original_sample, 'label'):
-                # Class-based storage
-                # Create a new instance with the same attributes
-                class_attrs = original_sample.__dict__.copy()
-                new_sample = type(original_sample)(**class_attrs)
-            else:
-                # Dictionary storage
-                new_sample = original_sample.copy()
+                # Create a deep copy of the sample
+                if hasattr(original_sample, 'label'):
+                    # Class-based storage
+                    # Create a new instance with the same attributes
+                    class_attrs = original_sample.__dict__.copy()
+                    new_sample = type(original_sample)(**class_attrs)
+                else:
+                    # Dictionary storage
+                    new_sample = original_sample.copy()
 
-            # Add minor noise to numerical attributes to prevent exact duplication
-            if hasattr(new_sample, 'numerical_attributes') and new_sample.numerical_attributes is not None:
-                # Add small random noise to numerical features
-                noise = np.random.normal(0, 0.01, len(new_sample.numerical_attributes))
-                new_sample.numerical_attributes = [max(0, float(val) + n) for val, n in
-                                                   zip(new_sample.numerical_attributes, noise)]
-            elif 'numerical_attributes' in new_sample and new_sample['numerical_attributes'] is not None:
-                noise = np.random.normal(0, 0.01, len(new_sample['numerical_attributes']))
-                new_sample['numerical_attributes'] = [max(0, float(val) + n) for val, n in
-                                                      zip(new_sample['numerical_attributes'], noise)]
+                # Add minor noise to numerical attributes to prevent exact duplication
+                if hasattr(new_sample, 'numerical_attributes') and new_sample.numerical_attributes is not None:
+                    # Add small random noise to numerical features
+                    noise = np.random.normal(0, 0.01, len(new_sample.numerical_attributes))
+                    new_sample.numerical_attributes = [max(0, float(val) + n) for val, n in
+                                                       zip(new_sample.numerical_attributes, noise)]
+                elif 'numerical_attributes' in new_sample and new_sample['numerical_attributes'] is not None:
+                    noise = np.random.normal(0, 0.01, len(new_sample['numerical_attributes']))
+                    new_sample['numerical_attributes'] = [max(0, float(val) + n) for val, n in
+                                                          zip(new_sample['numerical_attributes'], noise)]
 
-            # Add the bootstrapped sample to our list
-            bootstrapped_samples.append(new_sample)
+                # Add the bootstrapped sample to our list
+                bootstrapped_samples.append(new_sample)
 
     # Add bootstrapped samples to the dataset
     final_dataset = size_filtered_dataset + bootstrapped_samples
@@ -618,50 +639,53 @@ def process_dicom_dataset(dataset_path, label_dict_path, output_dir,
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser()
-    parser.add_argument("-c", "--config_path", type=str, required=True, help="Path to config file.")
-    parser.add_argument("-o", "--output_dir", type=str, default="./data/processed",
-                        help="Directory to save processed dataset.")
-    parser.add_argument("-m", "--min_samples", type=int, default=50,
-                        help="Minimum samples per class after bootstrapping.")
-    parser.add_argument("-s", "--min_class_size", type=int, default=20,
-                        help="Minimum class size to keep (classes with fewer samples will be removed).")
-    parser.add_argument("-f", "--filter_patterns", nargs='+',
-                        default=["4DDWI", "4DCT", "4DPT", "4DCDWI", "4DFMRI", "4DPER"],
-                        help="Patterns to filter out classes (e.g., 4DDWI 4DCT 4DPT).")
-    parser.add_argument("-b", "--bootstrap", action="store_true", default=True,
-                        help="Enable bootstrapping of underrepresented classes.")
-    config_args = parser.parse_args()
+    # Use a single config file for all parameters
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-c", "--config_path", type=str, default="./config/preproc_config.json",
+                        help="Path to JSON config file.")
+    args = parser.parse_args()
 
     # Read the configuration file
-    args = read_yaml_config(config_args.config_path)
+    config = read_json_config(args.config_path)
+
+    # Extract processing parameters from config
+    processing_params = config.get('processing_params', {})
+
+    # Set default values if not specified in config
+    min_class_size = processing_params.get('min_class_size', 20)
+    min_samples = processing_params.get('min_samples', 50)
+    filter_patterns = processing_params.get('filter_patterns',
+                                            ["4DDWI", "4DCT", "4DPT", "4DCDWI", "4DFMRI", "4DPER"])
+    do_bootstrap = processing_params.get('do_bootstrap', True)
 
     # Extract paths from config
-    print(args)
-    dataset_path = Path(args.paths.dataset_dir) / "dataset.pkl"
-    label_dict_path = Path(args.paths.dataset_dir) / "label_dict.json"
+    dataset_path = Path(config.paths.get('dataset_dir')) / "dataset.pkl"
+    label_dict_path = Path(config.paths.get('dataset_dir')) / "label_dict.json"
+    output_dir = Path(processing_params.get('output_dir', "./data/processed"))
 
     print("=" * 80)
     print("DICOM Dataset Processing Parameters:")
     print("=" * 80)
     print(f"Dataset path: {dataset_path}")
     print(f"Label dictionary path: {label_dict_path}")
-    print(f"Output directory: {config_args.output_dir}")
-    print(f"Filter patterns: {config_args.filter_patterns}")
-    print(f"Minimum class size: {config_args.min_class_size}")
-    print(f"Minimum samples per class after bootstrapping: {config_args.min_samples}")
-    print(f"Perform bootstrapping: {config_args.bootstrap}")
+    print(f"Output directory: {output_dir}")
+    print(f"Filter patterns: {filter_patterns}")
+    print(f"Minimum class size: {min_class_size}")
+    print(f"Minimum samples per class after bootstrapping: {min_samples}")
+    print(f"Perform bootstrapping: {do_bootstrap}")
     print("=" * 80)
 
     # Call the main processing function
     output_dataset_path, output_label_dict_path, stats_path = process_dicom_dataset(
         dataset_path=dataset_path,
         label_dict_path=label_dict_path,
-        output_dir=config_args.output_dir,
-        filter_patterns=config_args.filter_patterns,
-        min_class_size=config_args.min_class_size,
-        min_samples=config_args.min_samples,
-        do_bootstrap=config_args.bootstrap
+        output_dir=output_dir,
+        filter_patterns=filter_patterns,
+        min_class_size=min_class_size,
+        min_samples=min_samples,
+        do_bootstrap=do_bootstrap
     )
 
     print("\nProcessing complete!")

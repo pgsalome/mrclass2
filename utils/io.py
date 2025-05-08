@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import Dict, Any, Union, List
 import torch
 import numpy as np
+import wandb
+import os
+from typing import Optional, List # Optional type hinting
 
 
 def read_yaml_config(config_path: str) -> Any:
@@ -155,3 +158,40 @@ def list_files(directory: str, extension: str = None) -> List[str]:
         if extension is None or file.endswith(extension):
             files.append(os.path.join(directory, file))
     return files
+
+
+def get_wandb_run_metrics(run_path: str) -> Optional[List[str]]:
+    """
+    Fetches and returns the names of metrics logged over time for a specific W&B run.
+
+    Args:
+        run_path: The path to the W&B run (e.g., "username/project/run_id").
+
+    Returns:
+        A list of metric names (strings) logged in the run's history,
+        excluding internal W&B columns (like _runtime, _timestamp, _step).
+        Returns None if an error occurs during fetching or processing.
+    """
+    # Make sure you are logged in via CLI `wandb login`
+    # or set the WANDB_API_KEY environment variable
+
+    try:
+        api = wandb.Api()
+        run = api.run(run_path)
+
+        # --- Get all metrics logged over time ---
+        history_df = run.history()  # Fetch the history data
+
+        metric_names = []
+        # Collect column names (these are your available metrics)
+        for col_name in history_df.columns:
+            # Skip internal wandb columns unless needed
+            if not col_name.startswith('_'):
+                metric_names.append(col_name)
+
+        return metric_names
+
+    except Exception as e:
+        print(f"Error accessing W&B run '{run_path}': {e}")
+        print("Please ensure the run path is correct and you have access.")
+        return None  # Indicate failure by returning None
