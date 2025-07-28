@@ -32,6 +32,8 @@
   "filtering": {
     "axes": [
       "COR",
+      "SAG",
+      "TRA",
       "3DTRA",
       "3DCOR",
       "3DSAG"
@@ -48,17 +50,21 @@
 
   "ignore_4D": false,
   "ignore_col": false,
-  "orientation": "COR",
+  "orientation": "ALL",
   "delta": 0.2,
   "min_modality_count": 2,
   "seed": 11121,
 
   "processing_params": {
-    "min_class_size": 20,
+    "min_class_size": 1,
     "min_samples": 50,
-    "filter_patterns": [],
     "do_bootstrap": true,
-    "output_dir": "/media/e210/portable_hdd/d_cor_analca_bodypart"
+    "output_dir": "/media/e210/portable_hdd/d_bodypart_final_cleaned",
+    "test_mode_max_dirs": -1,
+    "filter_patterns": ["4DDWI", "4DCT", "4DPT", "4DCDWI", "4DFMRI", "4DPER"],
+    "samples_per_batch_file": 1500,
+    "cap_per_label": 2500,
+    "workers": "max"
   },
 
   "training_params": {
@@ -70,11 +76,13 @@
 
   "paths": {
     "pycurt_dirs": [
-      "/media/e210/HD1/MINT_wdir1/workflows_output",
-      "/media/e210/HD81/GLIOMA/all_pids",
-      "/media/e210/HD1/NSCLC-SBRT/all_pids_PsCurated",
-      "/media/e210/HD2/data_sorted/anal_ca/anal-ca_mrclass"
+
+     "/media/e210/HD1/NSCLC-SBRT/all_pids_PsCurated",
+      "/media/e210/HD2/data_sorted/anal_ca/anal-ca_mrclass",
+      "/media/e210/HD8/GLIOMA/all_pids"
+
     ],
-    "dataset_dir": "/media/e210/portable_hdd/d_cor_analca_bodypart"
+    "dataset_dir": "/media/e210/portable_hdd/d_bodypart_final_cleaned"
   }
 }
+

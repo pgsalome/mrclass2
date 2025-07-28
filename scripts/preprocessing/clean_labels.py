@@ -1,8 +1,14 @@
+#!/usr/bin/env python3
+"""
+Script to fix variable-length sequences in an existing dataset.
+This converts your existing dataset to fixed-length sequences without full reprocessing.
+"""
+
 import pickle
 import json
 import argparse
 from pathlib import Path
-from typing import List, Union, Tuple
+from typing import List
 from tqdm import tqdm
 from collections import Counter
 from dataclasses import dataclass
@@ -12,7 +18,6 @@ import re
 import numpy as np
 import random
 import matplotlib.pyplot as plt
-from datetime import datetime
 
 
 @dataclass
@@ -25,11 +30,20 @@ class encodedSample:
     label: int
 
 
-def read_json_config(config_path: Union[str, Path]) -> dict:
-    # ... (same as before) ...
+def read_json_config(config_path):
+    """
+    Read JSON configuration file
+
+    Args:
+        config_path: Path to the JSON config file
+
+    Returns:
+        Dict containing configuration parameters
+    """
     with open(config_path, 'r') as f:
         config = json.load(f)
 
+    # Convert config dict to an object for dot access if desired
     class DotDict(dict):
         __getattr__ = dict.get
         __setattr__ = dict.__setitem__
@@ -38,66 +52,134 @@ def read_json_config(config_path: Union[str, Path]) -> dict:
     return DotDict(config)
 
 
-def normalize_class_name(label: str) -> str:
-    # ... (same as before) ...
+def normalize_class_name(label):
+    """
+    Normalize class names to handle variations in naming conventions.
+    This function applies general, algorithmic normalization rules,
+    not specific manual remappings like those handled earlier.
+
+    Args:
+        label: Original class label string (after manual fixes and pattern filtering).
+
+    Returns:
+        Normalized class label string.
+    """
+    # Make a copy of the original for comparison
     original = label
+
+    # Handle all 4D sequences by removing the 4D prefix
     if label.startswith("4D") and not label.startswith("4DCCT") and not label.startswith("4DCT"):
+        # Extract the base and modifiers
         parts = label.split("-")
-        new_base = parts[0][2:]
+        base = parts[0]  # 4DXXX
+
+        # Remove the 4D prefix
+        new_base = base[2:]  # Convert 4DMRA to MRA, 4DPER to PER, etc.
+
+        # Keep the rest of the string intact
         if len(parts) > 1:
             return f"{new_base}-{'-'.join(parts[1:])}"
         else:
             return new_base
+
+    # Handle FS and SE order standardization
     if "-FS-SE" in label:
         label = label.replace("-FS-SE", "-SE-FS")
+
+    # Handle standardization of modifiers order
     modifiers = ["FS", "GE", "SE", "IRSE", "IRGE", "VFA", "MIP", "CE"]
+
+    # First, extract the base type (before first hyphen)
     if "-" in label:
         base_type = label.split("-")[0]
         rest = label[len(base_type) + 1:]
-        if not re.match(r"^[A-Z]+\d+", base_type):
+
+        # Check for numbered modalities and preserve them
+        if re.match(r"^[A-Z]+\d+", base_type):
+            # It's something like T1, T2, CT1, etc.
+            pass
+        else:
+            # Normalize the base type to uppercase
             base_type = base_type.upper()
+
+        # Handle DWI b-values using glioma-specific clinically relevant groupings
         if base_type == "DWI" and rest.startswith("b") and not any(x in rest for x in ["ADC", "FA", "TRACE", "EADC"]):
+            # Split into b-value and modifiers
             rest_parts = rest.split("-")
-            b_value_str = rest_parts[0][1:]
+            b_value_str = rest_parts[0][1:]  # Remove the 'b' prefix
             modifiers_part = rest_parts[1:] if len(rest_parts) > 1 else []
+
             try:
+                # Try to convert to float
                 b_value = float(b_value_str)
+
+                # Group into clinically relevant ranges for glioma imaging
                 if b_value == 0:
-                    new_b_value = "b0"
+                    new_b_value = "b0"  # Keep b=0 as its own category
                 elif 1 <= b_value <= 75:
-                    new_b_value = "b1-75"
+                    new_b_value = "b1-75"  # Very low b-values (includes b=50)
                 elif 76 <= b_value <= 150:
-                    new_b_value = "b76-150"
+                    new_b_value = "b76-150"  # Low b-values (includes b=100)
                 elif 151 <= b_value <= 500:
-                    new_b_value = "b151-500"
+                    new_b_value = "b151-500"  # Low-intermediate b-values
                 elif 501 <= b_value <= 850:
-                    new_b_value = "b501-850"
+                    new_b_value = "b501-850"  # Intermediate b-values
                 elif 851 <= b_value <= 1050:
-                    new_b_value = "b851-1050"
+                    new_b_value = "b851-1050"  # Standard clinical b-values (includes b=1000)
                 elif 1051 <= b_value <= 1450:
-                    new_b_value = "b1051-1450"
+                    new_b_value = "b1051-1450"  # High b-values (includes b=1200)
                 elif 1451 <= b_value <= 1950:
-                    new_b_value = "b1451-1950"
+                    new_b_value = "b1451-1950"  # Very high b-values
                 elif b_value > 1950:
-                    new_b_value = "b1951plus"
+                    new_b_value = "b1951plus"  # Ultra-high b-values
                 else:
+                    # If negative or otherwise unusual, keep the original
                     return original
-                found_modifiers = [part for part in modifiers_part if part in modifiers]
-                remaining_parts = [part for part in modifiers_part if part not in modifiers]
-                found_modifiers.sort()
-                if found_modifiers and remaining_parts:
-                    return f"DWI-{new_b_value}-{'-'.join(remaining_parts)}-{'-'.join(found_modifiers)}"
-                elif found_modifiers:
-                    return f"DWI-{new_b_value}-{'-'.join(found_modifiers)}"
-                elif remaining_parts:
-                    return f"DWI-{new_b_value}-{'-'.join(remaining_parts)}"
+
+                # Reconstruct the name with the new b-value group and the original modifiers
+                if modifiers_part:
+                    # Extract all modifiers
+                    found_modifiers = []
+                    remaining_parts = []
+
+                    for part in modifiers_part:
+                        if part in modifiers:
+                            found_modifiers.append(part)
+                        else:
+                            remaining_parts.append(part)
+
+                    # Sort modifiers to ensure consistent ordering
+                    found_modifiers.sort()
+
+                    # Rebuild with normalized format
+                    if found_modifiers and remaining_parts:
+                        return f"DWI-{new_b_value}-{'-'.join(remaining_parts)}-{'-'.join(found_modifiers)}"
+                    elif found_modifiers:
+                        return f"DWI-{new_b_value}-{'-'.join(found_modifiers)}"
+                    elif remaining_parts:
+                        return f"DWI-{new_b_value}-{'-'.join(remaining_parts)}"
+                    else:
+                        return f"DWI-{new_b_value}"
                 else:
                     return f"DWI-{new_b_value}"
             except ValueError:
+                # If conversion fails, keep the original
                 return original
-        found_modifiers = [part for part in rest.split("-") if part in modifiers]
-        remaining_parts = [part for part in rest.split("-") if part not in modifiers]
+
+        # Extract all modifiers
+        found_modifiers = []
+        remaining_parts = []
+
+        for part in rest.split("-"):
+            if part in modifiers:
+                found_modifiers.append(part)
+            else:
+                remaining_parts.append(part)
+
+        # Sort modifiers to ensure consistent ordering
         found_modifiers.sort()
+
+        # Rebuild the label
         if found_modifiers and remaining_parts:
             label = f"{base_type}-{'-'.join(remaining_parts)}-{'-'.join(found_modifiers)}"
         elif found_modifiers:
@@ -106,194 +188,91 @@ def normalize_class_name(label: str) -> str:
             label = f"{base_type}-{'-'.join(remaining_parts)}"
         else:
             label = base_type
+
     return label
 
 
-def load_dataset_from_batches(batches_dir: Path) -> List[encodedSample]:
+def process_dicom_dataset(dataset_path, label_dict_path, output_dir,
+                          filter_patterns=None,
+                          min_class_size=20,
+                          min_samples=50,
+                          do_bootstrap=True):
     """
-    Loads dataset by concatenating individual pickled batches.
-    Handles potential truncation of the last batch.
-    Includes diagnostic printing of numeric and (if available) string labels.
+    Complete pipeline to process DICOM dataset: filter, normalize, filter small classes, and bootstrap
 
     Args:
-        batches_dir: Path to the directory containing pickled batches.
-
-    Returns:
-        List of samples in the dataset.
-    """
-    full_dataset = []
-    batch_files = sorted(batches_dir.glob("dataset_batch_*.pkl"))
-    if not batch_files:
-        raise FileNotFoundError(f"No batch files found in {batches_dir}. Cannot reconstruct dataset.")
-
-    # Attempt to load label_dict.json for printing human-readable labels
-    label_dict_path = batches_dir.parent / "label_dict.json"  # Assuming label_dict.json is in parent dir
-    inv_label_dict_for_display = None
-    try:
-        with open(label_dict_path, 'r') as f:
-            temp_label_dict = json.load(f)
-            # Validate keys are strings, convert if necessary
-            temp_label_dict_clean = {str(k): v for k, v in temp_label_dict.items()}
-            # Basic heuristic: Check if any key is not a digit (implies it's a string label)
-            if any(not k.isdigit() for k in temp_label_dict_clean.keys()):
-                inv_label_dict_for_display = {v: k for k, v in temp_label_dict_clean.items()}
-            else:
-                print(
-                    f"[INFO] label_dict.json at {label_dict_path} seems to have only numeric keys. Cannot display string labels for batches.")
-    except (FileNotFoundError, json.JSONDecodeError, ValueError) as e:
-        print(
-            f"[INFO] Could not load '{label_dict_path.name}' for display purposes: {e}. Displaying only numeric labels.")
-
-    print(f"Attempting to load {len(batch_files)} batches from {batches_dir}...")
-
-    # Flag to print example samples only once
-    printed_examples = False
-
-    for i, batch_file in enumerate(tqdm(batch_files, desc="Loading batches", ncols=100)):
-        try:
-            with open(batch_file, "rb") as f:
-                batch_data = pickle.load(f)
-                full_dataset.extend(batch_data)
-
-                # Add print statement for first few samples from the first batch loaded
-                if not printed_examples and len(batch_data) > 0:
-                    print(f"\n--- Example samples from batch '{batch_file.name}' ---")
-                    for k, sample in enumerate(batch_data[:5]):  # Print up to 5 samples
-                        label_val = sample.label if hasattr(sample, 'label') else (
-                            sample['label'] if isinstance(sample, dict) else 'N/A')
-                        label_str = inv_label_dict_for_display.get(label_val,
-                                                                   f"ID:{label_val} (string unknown)") if inv_label_dict_for_display else f"ID:{label_val}"
-
-                        img_shape = 'N/A'
-                        if hasattr(sample, 'img') and hasattr(sample.img, 'shape'):
-                            img_shape = sample.img.shape
-                        elif isinstance(sample, dict) and 'img' in sample and hasattr(sample['img'], 'shape'):
-                            img_shape = sample['img'].shape
-
-                        print(
-                            f"Sample {k}: numeric_label={label_val}, string_label='{label_str}', img_shape={img_shape}")
-                    print("--------------------------------------------------")
-                    printed_examples = True  # Set flag to prevent reprinting for subsequent batches
-
-        except (pickle.UnpicklingError, EOFError) as e:
-            if i == len(batch_files) - 1:
-                print(f"\n[WARNING] UnpicklingError/EOFError for the last batch file '{batch_file.name}': {e}. "
-                      f"This batch might be incomplete and will be skipped.")
-            else:
-                raise RuntimeError(f"Critical UnpicklingError in batch '{batch_file.name}': {e}. "
-                                   f"Dataset generation was severely corrupted.")
-        except Exception as e:
-            print(f"\n[ERROR] An unexpected error occurred while loading batch '{batch_file.name}': {e}. Skipping.")
-
-    print(f"Loaded {len(full_dataset)} samples from batches.")
-    return full_dataset
-
-
-def process_dicom_dataset(data_base_dir: Path, output_dir: Path,
-                          filter_patterns: Union[List[str], None] = None,
-                          min_class_size: int = 20,
-                          min_samples: int = 50,
-                          do_bootstrap: bool = True) -> Tuple[Union[Path, None], Union[Path, None], Union[Path, None]]:
-    """
-    Complete pipeline to process DICOM dataset: filter, normalize, filter small classes, and bootstrap.
-    This version expects data to be loaded from pre-generated batches.
-
-    Args:
-        data_base_dir: The base directory where 'batches' folder and 'label_dict.json' reside.
-        output_dir: Directory to save processed dataset.
-        filter_patterns: List of patterns to filter out classes (e.g., ['4DDWI', '4DCT']).
-        min_class_size: Minimum class size to keep (classes with fewer samples will be removed).
-        min_samples: Target minimum samples per class after bootstrapping.
-        do_bootstrap: Whether to perform bootstrapping or not.
-
-    Returns:
-        Tuple of (output_dataset_path, output_label_dict_path, stats_path)
+        dataset_path: Path to the original dataset pickle file
+        label_dict_path: Path to the original label dictionary json file
+        output_dir: Directory to save processed dataset
+        filter_patterns: List of patterns to filter out classes (e.g., ['4DDWI', '4DCT'])
+        min_class_size: Minimum class size to keep (classes with fewer samples will be removed)
+        min_samples: Target minimum samples per class after bootstrapping
+        do_bootstrap: Whether to perform bootstrapping or not
     """
     if filter_patterns is None:
         filter_patterns = ['4DDWI', '4DCT', '4DPT', '4DCDWI', '4DFMRI', '4DPER']
 
-    print(f"Processing dataset from: {data_base_dir}")
+    print(f"Loading dataset from {dataset_path}")
 
+    # Create output directory if it doesn't exist
+    output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    batches_dir = data_base_dir / "batches"
-    try:
-        dataset = load_dataset_from_batches(batches_dir)
-    except FileNotFoundError as e:
-        print(f"[CRITICAL ERROR] {e}")
-        print("Please ensure the 'batches' directory exists and contains '.pkl' files.")
-        return None, None, None
+    # Load the dataset
+    print(f"Reading dataset from: {dataset_path}")
+    with open(dataset_path, 'rb') as f:
+        dataset = pickle.load(f)
 
-    if not dataset:
-        print("[CRITICAL ERROR] No samples loaded from batches. Cannot proceed.")
-        return None, None, None
+    # Load the label dictionary
+    print(f"Reading label dictionary from: {label_dict_path}")
+    with open(label_dict_path, 'r') as f:
+        original_label_dict = json.load(f)
 
-    original_label_dict_path = data_base_dir / "label_dict.json"
-    original_label_dict = {}
-
-    try:
-        print(f"Attempting to read original label dictionary from: {original_label_dict_path}")
-        with open(original_label_dict_path, 'r') as f:
-            raw_loaded_dict = json.load(f)
-
-            original_label_dict = {str(k): v for k, v in raw_loaded_dict.items()}
-
-            if not original_label_dict:
-                raise ValueError("label_dict.json is empty or contains no valid entries.")
-
-            contains_non_digit_keys = any(not k.isdigit() for k in original_label_dict.keys())
-
-            if not contains_non_digit_keys and len(original_label_dict) > 0:
-                print(
-                    f"[CRITICAL ERROR] The loaded '{original_label_dict_path.name}' appears to have only numeric keys (e.g., {list(original_label_dict.keys())[:5]}).")
-                print("This indicates the original label dictionary was generated incorrectly by 'get_dataset.py'.")
-                print("It should map string labels (like 'HNC', 'PLV') to integers, not numbers to numbers.")
-                print(
-                    "Cannot proceed with meaningful normalization. You must fix/regenerate the original 'label_dict.json'.")
-                return None, None, None
-
-    except (FileNotFoundError, json.JSONDecodeError, ValueError) as e:
-        print(f"[CRITICAL ERROR] Failed to load original label_dict.json from {original_label_dict_path}: {e}")
-        print("This file is crucial for mapping numeric labels in batches back to string names for processing.")
-        print(
-            "Please ensure it exists and is valid. If it's corrupted or missing, you MUST reconstruct it from your raw data sources.")
-        return None, None, None
-
+    # Create inverse mapping from numeric label to class name for the *initial* dataset
     inv_original_label_dict = {v: k for k, v in original_label_dict.items()}
 
-    original_class_counts_raw = Counter([inv_original_label_dict[sample.label] for sample in dataset])
+    # Count samples per class before any processing (true original raw counts)
+    if hasattr(dataset[0], 'label'):
+        original_class_counts_raw = Counter([inv_original_label_dict[sample.label] for sample in dataset])
+    else:
+        original_class_counts_raw = Counter([inv_original_label_dict[sample['label']] for sample in dataset])
 
+    # --- NEW STEP: Apply specific label merges and deletions ---
     print("\n" + "=" * 60)
-    print("APPLYING SPECIFIC LABEL MERGES AND DELETIONS (Stage 0)")
+    print("APPLYING SPECIFIC LABEL MERGES AND DELETIONS")
     print("=" * 60)
 
     manual_remapping_rules = {
-        "PLV-EG": "PLV-LEG",
-        "SPINE": "WS",
-        "ANPLS": "LS"
+        "PLV-EG": "PLV-LEG",  # Merge PLV-EG into PLV-LEG
+        "SPINE": "WS",  # Rename SPINE to WS
+        "ANPLS": "LS"  # Rename ANPLS to LS
     }
     labels_to_remove_completely = {"HNCANP", "NS"}
 
     temp_processed_dataset = []
-    temp_processed_label_strings = []
+    temp_processed_label_strings = []  # Stores string labels after manual fix
     deleted_sample_count = 0
     remapped_summary = Counter()
 
     print(f"Processing {len(dataset)} samples for manual label adjustments...")
     for sample in tqdm(dataset, desc="Applying manual label adjustments"):
-        current_numeric_label = sample.label
+        # Get the current label string from the original loaded data
+        current_numeric_label = sample.label if hasattr(sample, 'label') else sample['label']
         current_label_str = inv_original_label_dict.get(current_numeric_label, "UNKNOWN_LABEL")
 
+        # Check if the label should be removed
         if current_label_str in labels_to_remove_completely:
             deleted_sample_count += 1
-            continue
+            continue  # Skip this sample
 
+        # Apply remapping rules
         if current_label_str in manual_remapping_rules:
             new_label_str = manual_remapping_rules[current_label_str]
-            if new_label_str != current_label_str:
+            if new_label_str != current_label_str:  # Only count if actually remapped
                 remapped_summary[f"'{current_label_str}' -> '{new_label_str}'"] += 1
-            current_label_str = new_label_str
+            current_label_str = new_label_str  # Update to the remapped name
 
+        # Append the sample and its (potentially new) label string
         temp_processed_dataset.append(sample)
         temp_processed_label_strings.append(current_label_str)
 
@@ -306,53 +285,70 @@ def process_dicom_dataset(data_base_dir: Path, output_dir: Path,
     else:
         print("  - No specific remappings were applied.")
 
-    if not temp_processed_dataset:
-        print("[CRITICAL ERROR] No samples left after manual merges/deletions. Cannot proceed.")
-        return None, None, None
-
+    # Reconstruct the label dictionary based on the labels remaining after manual adjustments
+    # This also assigns new, contiguous numeric IDs
     unique_labels_after_manual_fix = sorted(list(set(temp_processed_label_strings)))
     current_label_dict = {name: i for i, name in enumerate(unique_labels_after_manual_fix)}
     current_inv_label_dict = {v: k for k, v in current_label_dict.items()}
 
+    # Update numeric labels in the dataset based on the new dictionary
     dataset_after_manual_fix = []
     for i, sample in enumerate(tqdm(temp_processed_dataset, desc="Updating numeric labels after manual fix")):
         new_numeric_label = current_label_dict[temp_processed_label_strings[i]]
-        sample.label = new_numeric_label
+        if hasattr(sample, 'label'):
+            sample.label = new_numeric_label
+        else:
+            sample['label'] = new_numeric_label
         dataset_after_manual_fix.append(sample)
 
     print(f"Total samples after manual adjustments: {len(dataset_after_manual_fix)}")
     print(f"Total unique classes after manual adjustments: {len(current_label_dict)}")
 
-    final_mapping_from_raw_to_normalized = {}
-    for raw_name_str, raw_numeric_id in original_label_dict.items():
-        current_name_temp = raw_name_str
+    # Count samples per class *after* manual fixes (this is the new "original" for subsequent steps)
+    if hasattr(dataset_after_manual_fix[0], 'label'):
+        initial_class_counts_for_pipeline = Counter(
+            [current_inv_label_dict[sample.label] for sample in dataset_after_manual_fix])
+    else:
+        initial_class_counts_for_pipeline = Counter(
+            [current_inv_label_dict[sample['label']] for sample in dataset_after_manual_fix])
 
+    # Build `final_mapping_from_raw_to_normalized`:
+    # This will map original_raw_name -> final_normalized_name (after STEP 2 and handling deletions)
+    final_mapping_from_raw_to_normalized = {}
+    for raw_name, raw_id in original_label_dict.items():
+        current_name_temp = raw_name
+
+        # Apply manual fixes (deletion/remapping)
         if current_name_temp in labels_to_remove_completely:
-            final_mapping_from_raw_to_normalized[raw_name_str] = "_DELETED_MANUAL_"
+            final_mapping_from_raw_to_normalized[raw_name] = "_DELETED_MANUAL_"
             continue
 
         if current_name_temp in manual_remapping_rules:
             current_name_temp = manual_remapping_rules[current_name_temp]
 
+        # Apply pattern filtering (check if the *remapped* name would be filtered)
         is_pattern_filtered_after_manual = False
         for pattern in filter_patterns:
             if pattern in current_name_temp:
                 is_pattern_filtered_after_manual = True
                 break
         if is_pattern_filtered_after_manual:
-            final_mapping_from_raw_to_normalized[raw_name_str] = "_DELETED_PATTERN_"
+            final_mapping_from_raw_to_normalized[raw_name] = "_DELETED_PATTERN_"
             continue
 
+        # Apply general normalization (normalize_class_name)
         final_normalized_name = normalize_class_name(current_name_temp)
-        final_mapping_from_raw_to_normalized[raw_name_str] = final_normalized_name
+        final_mapping_from_raw_to_normalized[raw_name] = final_normalized_name
 
+    # STEP 1: FILTER OUT SPECIFIED PATTERNS (now operating on the manually fixed dataset)
     print("\n" + "=" * 60)
     print("STEP 1: FILTERING OUT SPECIFIED PATTERNS")
     print("=" * 60)
 
     pattern_filtered_classes = []
+    # Use current_label_dict for pattern matching against *current* label names
     for pattern in filter_patterns:
-        matching_classes = [cls_name for cls_name in current_label_dict.keys() if pattern in cls_name]
+        matching_classes = [cls for cls in current_label_dict.keys() if pattern in cls]
         if matching_classes:
             pattern_filtered_classes.extend(matching_classes)
             print(f"Found {len(matching_classes)} classes matching pattern '{pattern}'")
@@ -369,15 +365,18 @@ def process_dicom_dataset(data_base_dir: Path, output_dir: Path,
         print("  - No classes matched specified patterns for filtering.")
 
     filtered_dataset = []
+    # Use current_inv_label_dict for lookup
     for sample in dataset_after_manual_fix:
-        sample_label_numeric = sample.label
-        sample_label_str = current_inv_label_dict.get(sample_label_numeric, "UNKNOWN_LABEL_NUMERIC_ID_NOT_FOUND")
-
-        if sample_label_str not in pattern_filtered_classes:
-            filtered_dataset.append(sample)
+        if hasattr(sample, 'label'):
+            if current_inv_label_dict[sample.label] not in pattern_filtered_classes:
+                filtered_dataset.append(sample)
+        else:
+            if current_inv_label_dict[sample['label']] not in pattern_filtered_classes:
+                filtered_dataset.append(sample)
 
     print(f"Removed {len(dataset_after_manual_fix) - len(filtered_dataset)} samples from pattern-filtered classes")
 
+    # STEP 2: NORMALIZE CLASS NAMES (general normalization)
     print("\n" + "=" * 60)
     print("STEP 2: NORMALIZING CLASS NAMES (General Rules)")
     print("=" * 60)
@@ -390,41 +389,54 @@ def process_dicom_dataset(data_base_dir: Path, output_dir: Path,
         normalization_mapping = {}
         after_pattern_filtering_counts = Counter()
     else:
-        remaining_class_string_names = set([current_inv_label_dict[sample.label] for sample in filtered_dataset])
+        if hasattr(filtered_dataset[0], 'label'):
+            remaining_class_names = set([current_inv_label_dict[sample.label] for sample in filtered_dataset])
+        else:
+            remaining_class_names = set([current_inv_label_dict[sample['label']] for sample in filtered_dataset])
 
-        normalized_labels = {}
-        for original_name_after_patt_filter in remaining_class_string_names:
+        normalized_labels = {}  # Maps class name (after manual & pattern filter) -> class name (after general norm)
+        for original_name_after_patt_filter in remaining_class_names:
             normalized_name_step2 = normalize_class_name(original_name_after_patt_filter)
             normalized_labels[original_name_after_patt_filter] = normalized_name_step2
 
+        # Count class instances after pattern filtering but before general normalization
         after_pattern_filtering_counts = Counter()
+        # Count class instances after general normalization
         normalized_counts = Counter()
 
         for sample in filtered_dataset:
-            sample_label_numeric = sample.label
-            original_class_name_for_step2 = current_inv_label_dict[sample_label_numeric]
+            if hasattr(sample, 'label'):
+                original_class_name_for_step2 = current_inv_label_dict[sample.label]
+                normalized_class_name_step2 = normalized_labels[original_class_name_for_step2]
 
-            normalized_class_name_step2 = normalized_labels[original_class_name_for_step2]
+                after_pattern_filtering_counts[original_class_name_for_step2] += 1
+                normalized_counts[normalized_class_name_step2] += 1
+            else:
+                original_class_name_for_step2 = current_inv_label_dict[sample['label']]
+                normalized_class_name_step2 = normalized_labels[original_class_name_for_step2]
 
-            after_pattern_filtering_counts[original_class_name_for_step2] += 1
-            normalized_counts[normalized_class_name_step2] += 1
+                after_pattern_filtering_counts[original_class_name_for_step2] += 1
+                normalized_counts[normalized_class_name_step2] += 1
 
+        # Create new label dictionary with normalized names (from step 2)
         normalized_label_dict = {name: i for i, name in enumerate(sorted(normalized_counts.keys()))}
 
+        # Create mapping from old (current_label_dict, i.e. after manual fix) labels to new normalized labels
         current_to_normalized_id = {}
-        for original_numeric_id_after_manual, original_name_after_manual in current_inv_label_dict.items():
-            if original_name_after_manual not in pattern_filtered_classes:
-                normalized_name_str = normalized_labels.get(original_name_after_manual)
-                if normalized_name_str is not None and normalized_name_str in normalized_label_dict:
-                    new_id_after_norm = normalized_label_dict[normalized_name_str]
-                    current_to_normalized_id[original_numeric_id_after_manual] = new_id_after_norm
+        for original_class_name_for_step2 in remaining_class_names:
+            original_id = current_label_dict[original_class_name_for_step2]
+            normalized_class_name_step2 = normalized_labels[original_class_name_for_step2]
+            new_id = normalized_label_dict[normalized_class_name_step2]
+            current_to_normalized_id[original_id] = new_id
 
+        # Update dataset with normalized label IDs
         normalized_dataset = []
         for sample in tqdm(filtered_dataset, desc="Updating dataset with normalized labels"):
-            sample_current_numeric_id = sample.label
-            if sample_current_numeric_id in current_to_normalized_id:
-                new_numeric_label_for_sample = current_to_normalized_id[sample_current_numeric_id]
-                sample.label = new_numeric_label_for_sample
+            if hasattr(sample, 'label'):
+                sample.label = current_to_normalized_id[sample.label]
+                normalized_dataset.append(sample)
+            else:
+                sample['label'] = current_to_normalized_id[sample['label']]
                 normalized_dataset.append(sample)
 
         print(f"Classes after pattern filtering (before general norm): {len(after_pattern_filtering_counts)}")
@@ -432,7 +444,7 @@ def process_dicom_dataset(data_base_dir: Path, output_dir: Path,
         print(
             f"Reduced by: {len(after_pattern_filtering_counts) - len(normalized_counts)} classes through general normalization")
 
-        normalization_mapping = {}
+        normalization_mapping = {}  # This maps labels *after pattern filtering* to *after general normalization*
         for original_name, norm_name in normalized_labels.items():
             if norm_name not in normalization_mapping:
                 normalization_mapping[norm_name] = []
@@ -451,20 +463,21 @@ def process_dicom_dataset(data_base_dir: Path, output_dir: Path,
         else:
             print("  - No classes were merged through general normalization.")
 
+    # STEP 3: FILTER OUT SMALL CLASSES
     print(f"\n" + "=" * 60)
     print(f"STEP 3: FILTERING OUT CLASSES WITH FEWER THAN {min_class_size} SAMPLES")
     print("=" * 60)
 
     inv_normalized_dict = {v: k for k, v in normalized_label_dict.items()}
 
-    small_classes_names_str = [cls for cls, count in normalized_counts.items() if count < min_class_size]
+    small_classes = [cls for cls, count in normalized_counts.items() if count < min_class_size]
 
-    print(f"Filtering out {len(small_classes_names_str)} small classes:")
-    if small_classes_names_str:
-        for cls in small_classes_names_str[:20]:
+    print(f"Filtering out {len(small_classes)} small classes:")
+    if small_classes:
+        for cls in small_classes[:20]:
             print(f"  - {cls} ({normalized_counts[cls]} samples)")
-        if len(small_classes_names_str) > 20:
-            print(f"  - ... and {len(small_classes_names_str) - 20} more")
+        if len(small_classes) > 20:
+            print(f"  - ... and {len(small_classes) - 20} more")
     else:
         print("  - No classes below minimum size found.")
 
@@ -474,13 +487,12 @@ def process_dicom_dataset(data_base_dir: Path, output_dir: Path,
         size_filtered_counts = Counter()
         filtered_label_dict = {}
     else:
-        size_filtered_dataset = []
-        for sample in normalized_dataset:
-            sample_label_numeric = sample.label
-            sample_label_str = inv_normalized_dict.get(sample_label_numeric, "UNKNOWN_LABEL_NUMERIC_ID_NOT_FOUND")
-
-            if sample_label_str not in small_classes_names_str:
-                size_filtered_dataset.append(sample)
+        if hasattr(normalized_dataset[0], 'label'):
+            size_filtered_dataset = [sample for sample in normalized_dataset
+                                     if inv_normalized_dict[sample.label] not in small_classes]
+        else:
+            size_filtered_dataset = [sample for sample in normalized_dataset
+                                     if inv_normalized_dict[sample['label']] not in small_classes]
 
         print(f"Removed {len(normalized_dataset) - len(size_filtered_dataset)} samples from small classes")
 
@@ -489,43 +501,50 @@ def process_dicom_dataset(data_base_dir: Path, output_dir: Path,
             size_filtered_counts = Counter()
             filtered_label_dict = {}
         else:
-            size_filtered_counts = Counter([inv_normalized_dict[sample.label] for sample in size_filtered_dataset])
+            if hasattr(size_filtered_dataset[0], 'label'):
+                size_filtered_counts = Counter([inv_normalized_dict[sample.label] for sample in size_filtered_dataset])
+            else:
+                size_filtered_counts = Counter(
+                    [inv_normalized_dict[sample['label']] for sample in size_filtered_dataset])
 
+            # Create new label dictionary without small classes, re-indexing for contiguity
             filtered_label_dict = {name: i for i, name in enumerate(sorted(size_filtered_counts.keys()))}
 
+            # Update dataset with filtered label IDs to the new contiguous IDs
             normalized_to_filtered_id = {}
-            for class_name_str in size_filtered_counts.keys():
-                old_numeric_id = normalized_label_dict[class_name_str]
-                new_numeric_id = filtered_label_dict[class_name_str]
-                normalized_to_filtered_id[old_numeric_id] = new_numeric_id
+            for class_name in size_filtered_counts.keys():
+                old_id = normalized_label_dict[class_name]
+                new_id = filtered_label_dict[class_name]
+                normalized_to_filtered_id[old_id] = new_id
 
-            final_label_indexed_dataset = []
+            final_label_indexed_dataset = []  # Renamed for clarity on stage
             for sample in tqdm(size_filtered_dataset, desc="Re-indexing labels after size filtering"):
-                current_numeric_id_for_reindex = sample.label
-                if current_numeric_id_for_reindex in normalized_to_filtered_id:
-                    new_numeric_label_for_sample = normalized_to_filtered_id[current_numeric_id_for_reindex]
-                    sample.label = new_numeric_label_for_sample
+                if hasattr(sample, 'label'):
+                    sample.label = normalized_to_filtered_id[sample.label]
+                    final_label_indexed_dataset.append(sample)
+                else:
+                    sample['label'] = normalized_to_filtered_id[sample['label']]
                     final_label_indexed_dataset.append(sample)
 
-            size_filtered_dataset = final_label_indexed_dataset
+            size_filtered_dataset = final_label_indexed_dataset  # Update the dataset reference
 
+    # The `normalized_label_dict` now holds the final label mapping before bootstrapping
+    # which is `filtered_label_dict` after size filtering.
     current_final_label_dict = filtered_label_dict
 
+    # STEP 4: BOOTSTRAP UNDERREPRESENTED CLASSES
     print(f"\n" + "=" * 60)
     print(f"STEP 4: BOOTSTRAPPING CLASSES WITH FEWER THAN {min_samples} SAMPLES")
     print("=" * 60)
 
-    bootstrapped_samples = []
-    final_dataset = size_filtered_dataset
-    final_counts = Counter()
-
     if not size_filtered_dataset:
         print("No samples left after size filtering to bootstrap.")
+        final_dataset = []
+        final_counts = Counter()
     else:
         inv_current_final_dict = {v: k for k, v in current_final_label_dict.items()}
 
-        classes_to_bootstrap = [cls_name_str for cls_name_str, count in size_filtered_counts.items() if
-                                count < min_samples]
+        classes_to_bootstrap = [cls for cls, count in size_filtered_counts.items() if count < min_samples]
 
         print(f"Bootstrapping {len(classes_to_bootstrap)} classes with fewer than {min_samples} samples:")
         if classes_to_bootstrap:
@@ -538,50 +557,52 @@ def process_dicom_dataset(data_base_dir: Path, output_dir: Path,
 
         class_indices = {}
         for i, sample in enumerate(size_filtered_dataset):
-            sample_label_numeric = sample.label
-            class_name_str = inv_current_final_dict[sample_label_numeric]
-            if class_name_str not in class_indices:
-                class_indices[class_name_str] = []
-            class_indices[class_name_str].append(i)
+            if hasattr(sample, 'label'):
+                class_name = inv_current_final_dict[sample.label]
+            else:
+                class_name = inv_current_final_dict[sample['label']]
+            if class_name not in class_indices:
+                class_indices[class_name] = []
+            class_indices[class_name].append(i)
+
+        bootstrapped_samples = []
 
         if do_bootstrap:
-            for class_name_str in tqdm(classes_to_bootstrap, desc="Bootstrapping classes"):
-                count = size_filtered_counts[class_name_str]
-                if count >= min_samples:
+            for class_name in tqdm(classes_to_bootstrap, desc="Bootstrapping classes"):
+                count = size_filtered_counts[class_name]
+                if count >= min_samples:  # Should already be filtered out by `classes_to_bootstrap` but good for safety
                     continue
-
-                indices = class_indices.get(class_name_str, [])
-                if not indices:
-                    print(
-                        f"[WARNING] No samples found for class '{class_name_str}' despite being in size_filtered_counts. Skipping bootstrap.")
-                    continue
-
+                indices = class_indices[class_name]
                 samples_needed = min_samples - count
                 for _ in range(samples_needed):
                     idx = random.choice(indices)
                     original_sample = size_filtered_dataset[idx]
+                    if hasattr(original_sample, 'label'):
+                        class_attrs = original_sample.__dict__.copy()
+                        new_sample = type(original_sample)(**class_attrs)
+                    else:
+                        new_sample = original_sample.copy()
 
-                    new_sample = encodedSample(
-                        img=original_sample.img,
-                        input_ids=list(original_sample.input_ids),
-                        attention_mask=list(original_sample.attention_mask),
-                        numerical_attributes=list(
-                            original_sample.numerical_attributes) if original_sample.numerical_attributes is not None else None,
-                        label=original_sample.label
-                    )
-
-                    if new_sample.numerical_attributes is not None:
+                    if hasattr(new_sample, 'numerical_attributes') and new_sample.numerical_attributes is not None:
                         noise = np.random.normal(0, 0.01, len(new_sample.numerical_attributes))
                         new_sample.numerical_attributes = [max(0, float(val) + n) for val, n in
                                                            zip(new_sample.numerical_attributes, noise)]
+                    elif 'numerical_attributes' in new_sample and new_sample['numerical_attributes'] is not None:
+                        noise = np.random.normal(0, 0.01, len(new_sample['numerical_attributes']))
+                        new_sample['numerical_attributes'] = [max(0, float(val) + n) for val, n in
+                                                              zip(new_sample['numerical_attributes'], noise)]
                     bootstrapped_samples.append(new_sample)
         else:
             print("Bootstrapping is disabled (`do_bootstrap=False`).")
 
         final_dataset = size_filtered_dataset + bootstrapped_samples
 
-        final_counts = Counter([inv_current_final_dict[sample.label] for sample in final_dataset])
+        if hasattr(final_dataset[0], 'label'):
+            final_counts = Counter([inv_current_final_dict[sample.label] for sample in final_dataset])
+        else:
+            final_counts = Counter([inv_current_final_dict[sample['label']] for sample in final_dataset])
 
+    # STEP 5: SAVE RESULTS AND GENERATE STATISTICS
     print(f"\n" + "=" * 60)
     print("STEP 5: SAVING RESULTS AND GENERATING STATISTICS")
     print("=" * 60)
@@ -589,21 +610,27 @@ def process_dicom_dataset(data_base_dir: Path, output_dir: Path,
     dataset_filename = "bootstrapped_dataset.pkl"
     label_dict_filename = "bootstrapped_label_dict.json"
 
+    # Save the processed dataset
     output_dataset_path = output_dir / dataset_filename
     with open(output_dataset_path, 'wb') as f:
         pickle.dump(final_dataset, f)
     print(f"\nSaved processed dataset to: {output_dataset_path}")
 
+    # Save the final label dictionary (after size filtering, before bootstrapping adds samples)
     output_label_dict_path = output_dir / label_dict_filename
     with open(output_label_dict_path, 'w') as f:
         json.dump(current_final_label_dict, f, indent=4)
     print(f"Saved final label dictionary to: {output_label_dict_path}")
 
+    # Save the comprehensive map from raw original names to their final normalized names (after Step 2 and deletions)
     full_mapping_path = output_dir / "full_label_processing_map.json"
     with open(full_mapping_path, 'w') as f:
         json.dump(final_mapping_from_raw_to_normalized, f, indent=4)
     print(f"Saved full label processing map to: {full_mapping_path}")
 
+    # Save mapping from original labels (after pattern filter) to normalized labels (after general norm) for reference
+    # This specifically represents the transformation in `normalize_class_name`
+    # The `normalization_mapping` created in STEP 2 (if any) is what's saved here.
     if 'normalization_mapping' in locals():
         mapping_path_general_norm = output_dir / "label_normalization_map.json"
         with open(mapping_path_general_norm, 'w') as f:
@@ -612,16 +639,21 @@ def process_dicom_dataset(data_base_dir: Path, output_dir: Path,
     else:
         print("No general normalization map was generated (e.g., no samples for Step 2).")
 
+    # Generate detailed class statistics
     class_stats = []
+    # Loop through the final set of class names (after size filtering, which are the keys in `current_final_label_dict`)
     for final_class_name_for_stats in sorted(current_final_label_dict.keys()):
+        # Find all original raw class names that ultimately map to this final_class_name_for_stats
         original_raw_classes_mapping_to_this = [
             raw_name for raw_name, mapped_final_name in final_mapping_from_raw_to_normalized.items()
             if mapped_final_name == final_class_name_for_stats
         ]
 
+        # Sum their counts from the truly raw original dataset
         original_raw_count_for_this_class = sum(
             original_class_counts_raw.get(name, 0) for name in original_raw_classes_mapping_to_this)
 
+        # Get counts at other stages from the already computed Counters
         after_general_norm_count = normalized_counts.get(final_class_name_for_stats, 0)
         after_size_filter_count = size_filtered_counts.get(final_class_name_for_stats, 0)
         final_bootstrapped_count = final_counts.get(final_class_name_for_stats, 0)
@@ -631,16 +663,19 @@ def process_dicom_dataset(data_base_dir: Path, output_dir: Path,
             "original_raw_classes_mapped": original_raw_classes_mapping_to_this,
             "original_raw_count": original_raw_count_for_this_class,
             "after_general_normalization_count": after_general_norm_count,
+            # This count includes effects of manual fix and pattern filter
             "after_size_filtering_count": after_size_filter_count,
             "final_bootstrapped_count": final_bootstrapped_count,
             "bootstrapped_samples_added": final_bootstrapped_count - after_size_filter_count
         })
 
+    # Save detailed statistics
     stats_path = output_dir / "class_statistics.json"
     with open(stats_path, 'w') as f:
         json.dump(class_stats, f, indent=4)
     print(f"Saved detailed statistics to: {stats_path}")
 
+    # Print summary statistics
     print("\n" + "=" * 60)
     print("SUMMARY STATISTICS")
     print("=" * 60)
@@ -652,6 +687,7 @@ def process_dicom_dataset(data_base_dir: Path, output_dir: Path,
     print(f"After bootstrapping: {len(final_dataset)} samples, {len(final_counts)} classes")
     print(f"Bootstrapped samples added: {len(bootstrapped_samples)}")
 
+    # Print class distribution after processing
     print("\nFinal class distribution (top 30 classes):")
     print("-" * 120)
     header = f"{'Class':<25} | {'Raw Orig Count':<15} | {'After Gen Norm':<18} | {'After Size Filter':<20} | {'Final Count':<15} | {'Added':<10}"
@@ -666,29 +702,38 @@ def process_dicom_dataset(data_base_dir: Path, output_dir: Path,
                 f"{entry['final_bootstrapped_count']:<15} | {entry['bootstrapped_samples_added']:<10}")
         print(line)
 
+    # Plot class distribution
     if final_counts:
-        plt.figure(figsize=(18, 9))
+        plt.figure(figsize=(18, 9))  # Increased figure size for more bars
 
+        # Get top 30 classes by final count
         top_classes_for_plot = sorted(final_counts.items(), key=lambda x: x[1], reverse=True)[:30]
         class_names_for_plot = [c[0] for c in top_classes_for_plot]
 
         x = np.arange(len(class_names_for_plot))
-        width = 0.15
+        width = 0.15  # Adjusted width for 4 bars
 
+        # Get counts for these classes at different stages for plotting
         plot_original_raw_counts = []
         plot_after_gen_norm_counts = []
         plot_size_filtered_counts = []
         plot_final_counts = []
 
         for cls_name_normalized in class_names_for_plot:
+            # Raw Original Count
             raw_names_for_plot = [
                 raw for raw, final_mapped in final_mapping_from_raw_to_normalized.items()
                 if final_mapped == cls_name_normalized
             ]
             plot_original_raw_counts.append(sum(original_class_counts_raw.get(name, 0) for name in raw_names_for_plot))
 
+            # After General Normalization
             plot_after_gen_norm_counts.append(normalized_counts.get(cls_name_normalized, 0))
+
+            # After Size Filtering
             plot_size_filtered_counts.append(size_filtered_counts.get(cls_name_normalized, 0))
+
+            # Final Count
             plot_final_counts.append(final_counts.get(cls_name_normalized, 0))
 
         plt.bar(x - 1.5 * width, plot_original_raw_counts, width, label='Raw Original Count')
@@ -700,7 +745,7 @@ def process_dicom_dataset(data_base_dir: Path, output_dir: Path,
         plt.ylabel('Sample Count')
         title = 'Class Distribution (min_class_size={}, bootstrapped to min={})'.format(min_class_size, min_samples)
         plt.title(title)
-        plt.xticks(x, class_names_for_plot, rotation=90, fontsize=8)
+        plt.xticks(x, class_names_for_plot, rotation=90, fontsize=8)  # Smaller font for many labels
         plt.legend()
         plt.tight_layout()
 
@@ -710,9 +755,11 @@ def process_dicom_dataset(data_base_dir: Path, output_dir: Path,
     else:
         print("\nSkipping class distribution plot: No classes remain after processing.")
 
+    # Additional plot: Cumulative distribution
     if final_counts:
         plt.figure(figsize=(10, 6))
 
+        # Sort all classes by frequency
         all_classes_cumulative = sorted(final_counts.items(), key=lambda x: x[1], reverse=True)
         cumulative_counts = np.cumsum([c[1] for c in all_classes_cumulative])
         total_samples_cumulative = sum(final_counts.values())
@@ -727,12 +774,14 @@ def process_dicom_dataset(data_base_dir: Path, output_dir: Path,
         plt.grid(True)
         plt.legend()
 
+        # Save cumulative plot
         cum_plot_path = output_dir / 'cumulative_distribution.png'
         plt.savefig(cum_plot_path)
         print(f"Cumulative plot saved to {cum_plot_path}")
     else:
         print("Skipping cumulative distribution plot: No classes remain after processing.")
 
+    # Calculate and print class balance metrics
     if final_counts:
         max_count = max(final_counts.values())
         min_count = min(final_counts.values())
@@ -766,14 +815,16 @@ def main():
                                             ["4DDWI", "4DCT", "4DPT", "4DCDWI", "4DFMRI", "4DPER"])
     do_bootstrap = processing_params.get('do_bootstrap', True)
 
-    data_base_dir = Path(config.paths.get('dataset_dir'))
+    dataset_path = Path(config.paths.get('dataset_dir')) / "dataset.pkl"
+    label_dict_path = Path(config.paths.get('dataset_dir')) / "label_dict.json"
     output_dir = Path(processing_params.get('output_dir', "./data/processed"))
 
     print("=" * 80)
     print("DICOM Dataset Processing Parameters:")
     print("=" * 80)
-    print(f"Data Base Directory (for batches/label_dict.json): {data_base_dir}")
-    print(f"Output directory for processed data: {output_dir}")
+    print(f"Dataset path: {dataset_path}")
+    print(f"Label dictionary path: {label_dict_path}")
+    print(f"Output directory: {output_dir}")
     print(f"Filter patterns: {filter_patterns}")
     print(f"Minimum class size: {min_class_size}")
     print(f"Minimum samples per class after bootstrapping: {min_samples}")
@@ -781,7 +832,8 @@ def main():
     print("=" * 80)
 
     output_dataset_path, output_label_dict_path, stats_path = process_dicom_dataset(
-        data_base_dir=data_base_dir,
+        dataset_path=dataset_path,
+        label_dict_path=label_dict_path,
         output_dir=output_dir,
         filter_patterns=filter_patterns,
         min_class_size=min_class_size,
@@ -789,17 +841,14 @@ def main():
         do_bootstrap=do_bootstrap
     )
 
-    if output_dataset_path and output_label_dict_path and stats_path:
-        print("\nProcessing complete!")
-        print(f"Results saved to:")
-        print(f"- Dataset: {output_dataset_path}")
-        print(f"- Final Label Dictionary: {output_label_dict_path}")
-        print(f"- Detailed Statistics: {stats_path}")
-        print(f"- Full Label Processing Map: {output_dir / 'full_label_processing_map.json'}")
-        if os.path.exists(output_dir / 'label_normalization_map.json'):
-            print(f"- General Normalization Map (Step 2): {output_dir / 'label_normalization_map.json'}")
-    else:
-        print("\nProcessing failed or no data was generated due to critical errors.")
+    print("\nProcessing complete!")
+    print(f"Results saved to:")
+    print(f"- Dataset: {output_dataset_path}")
+    print(f"- Final Label Dictionary: {output_label_dict_path}")
+    print(f"- Detailed Statistics: {stats_path}")
+    print(f"- Full Label Processing Map: {output_dir / 'full_label_processing_map.json'}")
+    if os.path.exists(output_dir / 'label_normalization_map.json'):
+        print(f"- General Normalization Map (Step 2): {output_dir / 'label_normalization_map.json'}")
 
 
 if __name__ == "__main__":

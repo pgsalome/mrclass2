@@ -10,7 +10,7 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import re
 import glob
-
+from utils.dataclass import encodedSample, dicomData
 # Import Optuna for Bayesian optimization
 import optuna
 from optuna.visualization import plot_optimization_history, plot_param_importances
@@ -540,9 +540,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Run MRI sequence classification experiments with Bayesian optimization")
     parser.add_argument("--base_config", default="./config/default.json", type=str, help="Path to base config file")
-    parser.add_argument("--output_dir", type=str, default="./config/bayesian_opt_sag_anal",
+    parser.add_argument("--output_dir", type=str, default="./config/bayesian_opt_cor_bpclass",
                         help="Directory to save experiment configs")
-    parser.add_argument("--results_file", type=str, default="logs/bayesian_opt_results_anal_sag.csv",
+    parser.add_argument("--results_file", type=str, default="logs/bayesian_opt_results_bpclass_cor.csv",
                         help="Path to save experiment results")
     parser.add_argument("--n_trials", type=int, default=20, help="Number of optimization trials")
     parser.add_argument("--random_seed", type=int, default=42, help="Random seed for reproducibility")

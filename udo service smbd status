@@ -1,0 +1,34 @@
+[0;1;32m●[0m smbd.service - Samba SMB Daemon
+     Loaded: loaded (/lib/systemd/system/smbd.service; enabled; vendor preset: enabled)
+     Active: [0;1;32mactive (running)[0m since Sat 2025-07-19 15:57:53 CEST; 22min ago
+       Docs: man:smbd(8)
+             man:samba(7)
+             man:smb.conf(5)
+    Process: 1385299 ExecStartPre=/usr/share/samba/update-apparmor-samba-profile (code=exited, status=0/SUCCESS)
+   Main PID: 1385324 (smbd)
+     Status: "smbd: ready to serve connections..."
+      Tasks: 4 (limit: 154038)
+     Memory: 17.8M
+     CGroup: /system.slice/smbd.service
+             ├─1385324 /usr/sbin/smbd --foreground --no-process-group
+             ├─1385326 /usr/sbin/smbd --foreground --no-process-group
+             ├─1385327 /usr/sbin/smbd --foreground --no-process-group
+             └─1385328 /usr/lib/x86_64-linux-gnu/samba/samba-bgqd --ready-signal-fd=45 --parent-watch-fd=11 --debuglevel=0 -F
+
+juil. 19 15:57:52 e210-CELSIUS-M770power systemd[1]: Starting Samba SMB Daemon...
+juil. 19 15:57:53 e210-CELSIUS-M770power systemd[1]: Started Samba SMB Daemon.
+
+[0;1;32m●[0m nmbd.service - Samba NMB Daemon
+     Loaded: loaded (/lib/systemd/system/nmbd.service; enabled; vendor preset: enabled)
+     Active: [0;1;32mactive (running)[0m since Fri 2025-06-27 10:48:41 CEST; 3 weeks 1 days ago
+       Docs: man:nmbd(8)
+             man:samba(7)
+             man:smb.conf(5)
+   Main PID: 2914 (nmbd)
+     Status: "nmbd: ready to serve connections..."
+      Tasks: 1 (limit: 154038)
+     Memory: 16.1M
+     CGroup: /system.slice/nmbd.service
+             └─2914 /usr/sbin/nmbd --foreground --no-process-group
+
+Warning: journal has been rotated since unit was started, output may be incomplete.

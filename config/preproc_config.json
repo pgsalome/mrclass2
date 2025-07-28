@@ -77,7 +77,8 @@
     "epochs": 30,
     "batch_size": 64,
     "tokenizer_name": "bert-base-uncased",
-    "txt_encoder_name": "bert-base-uncased"
+    "txt_encoder_name": "bert-base-uncased",
+    "max_sequence_length": 256
   },
 
   "paths": {
@@ -85,3 +86,6 @@
     "dataset_dir": "/media/e210/portable_hdd/d_cor_analca_correct"
   }
 }
+
+
+
