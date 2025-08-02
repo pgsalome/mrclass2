@@ -11,6 +11,7 @@ mrclass2.egg-info/SOURCES.txt
 mrclass2.egg-info/dependency_links.txt
 mrclass2.egg-info/top_level.txt
 utils/__init__.py
+utils/combine_batches.py
 utils/data_loader.py
 utils/dataclass.py
 utils/intensity_normalization.py

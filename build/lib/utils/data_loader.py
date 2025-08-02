@@ -71,20 +71,85 @@ def load_dataset(config: Dict[str, Any]) -> Tuple[List[encodedSample], Dict[str,
         - List of encodedSample objects
         - Dictionary mapping label names to indices
     """
+    print(f"DEBUG: load_dataset called")
+    print(f"DEBUG: config keys: {list(config.get('data', {}).keys())}")
+    print(f"DEBUG: orientation in config: {'orientation' in config.get('data', {})}")
+    print(f"DEBUG: orientation value: {config.get('data', {}).get('orientation', 'NOT SET')}")
+
     data_dir = Path(config["data"]["dataset_dir"])
-    dataset_path = data_dir / config["data"]["dataset_name"]
-    label_dict_path = data_dir / config["data"]["label_dict_name"]
 
-    # Load dataset from pickle file
-    dataset = load_pickle(str(dataset_path))
+    # Check if we're loading from batches
+    if "orientation" in config["data"]:
+        # Load from batches
+        orientation = config["data"]["orientation"]
+        batches_dir = data_dir / orientation / "batches"
 
-    # Load label dictionary from JSON file
-    with open(label_dict_path, 'r') as f:
-        label_dict = json.load(f)
+        if not batches_dir.exists():
+            raise FileNotFoundError(f"Batches directory not found: {batches_dir}")
 
-    return dataset, label_dict
+        # Load all batch files
+        full_dataset = []
+        batch_files = sorted(batches_dir.glob("dataset_batch_*.pkl"))
 
+        if not batch_files:
+            raise FileNotFoundError(f"No batch files found in {batches_dir}")
 
+        print(f"Loading {len(batch_files)} batch files from {batches_dir}...")
+        from tqdm import tqdm
+        for batch_file in tqdm(batch_files, desc="Loading batches"):
+            with open(batch_file, 'rb') as f:
+                batch_data = pickle.load(f)
+                full_dataset.extend(batch_data)
+
+        print(f"Loaded {len(full_dataset)} samples total")
+
+        # FIX: Pad all sequences to the same length
+        print("Fixing sequence lengths...")
+
+        # Find max length
+        max_length = max(len(sample.input_ids) for sample in full_dataset)
+        print(f"Max sequence length found: {max_length}")
+
+        # Get tokenizer for padding token
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')  # or distilbert-base-uncased
+        pad_token_id = tokenizer.pad_token_id or 0
+
+        # Pad all sequences
+        for sample in tqdm(full_dataset, desc="Padding sequences"):
+            current_length = len(sample.input_ids)
+            if current_length < max_length:
+                padding_length = max_length - current_length
+                # Pad with lists (since that's what your working dataset uses)
+                sample.input_ids = sample.input_ids + [pad_token_id] * padding_length
+                sample.attention_mask = sample.attention_mask + [0] * padding_length
+
+        # Verify all sequences now have the same length
+        lengths = set(len(sample.input_ids) for sample in full_dataset[:100])
+        print(f"Sequence lengths after padding (first 100): {lengths}")
+
+        # Load label dictionary
+        label_dict_path = data_dir / orientation / f"label_dict_{orientation}.json"
+        if not label_dict_path.exists():
+            raise FileNotFoundError(f"Label dictionary not found: {label_dict_path}")
+
+        with open(label_dict_path, 'r') as f:
+            label_dict = json.load(f)
+
+        return full_dataset, label_dict
+    else:
+        # Original single file loading
+        dataset_path = data_dir / config["data"]["dataset_name"]
+        label_dict_path = data_dir / config["data"]["label_dict_name"]
+
+        # Load dataset from pickle file
+        dataset = load_pickle(str(dataset_path))
+
+        # Load label dictionary from JSON file
+        with open(label_dict_path, 'r') as f:
+            label_dict = json.load(f)
+
+        return dataset, label_dict
 def prepare_hierarchical_labels(
         dataset: List[encodedSample],
         label_dict: Dict[str, int]

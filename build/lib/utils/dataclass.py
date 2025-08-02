@@ -61,6 +61,15 @@ class MRISequenceDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         sample = self.data[idx]
+        if idx < 5:
+            print(f"\nDEBUG Sample {idx}:")
+            print(f"  Type: {type(sample)}")
+            print(f"  Image shape: {sample.img.shape}")
+            print(f"  Image dtype: {sample.img.dtype}")
+            print(f"  Input IDs: type={type(sample.input_ids)}, len={len(sample.input_ids)}")
+            print(f"  Attention mask: type={type(sample.attention_mask)}, len={len(sample.attention_mask)}")
+            print(f"  Numerical attrs: type={type(sample.numerical_attributes)}, len={len(sample.numerical_attributes)}")
+            print(f"  Label: {sample.label}, type={type(sample.label)}")
 
         # Process image
         img = sample.img

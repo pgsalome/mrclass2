@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Script to investigate the actual text content and tokenization in your dataset.
-This will help us understand why sequences have different lengths despite padding="longest".
+Script to compare a working combined dataset with batch files to understand the difference.
+Save this as: scripts/preprocessing/investigate.py
 """
 
 import pickle
@@ -10,218 +10,225 @@ from pathlib import Path
 from collections import Counter
 from transformers import AutoTokenizer
 import numpy as np
+from tqdm import tqdm
+import sys
+import os
+
+# Add parent directory to path to import from utils
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+# Import the encodedSample class
+from utils.dataclass import encodedSample
 
 
-def investigate_dataset(dataset_path: str, num_samples: int = 10):
-    """
-    Investigate the dataset to understand sequence length variations.
+def analyze_dataset(dataset_path: str, dataset_name: str = "Dataset"):
+    """Analyze a dataset and return statistics."""
 
-    Args:
-        dataset_path: Path to the dataset pickle file
-        num_samples: Number of shortest/longest samples to examine
-    """
+    print(f"\n{'='*60}")
+    print(f"Analyzing: {dataset_name}")
+    print(f"Path: {dataset_path}")
+    print(f"{'='*60}")
 
-    print("=" * 80)
-    print("DATASET INVESTIGATION")
-    print("=" * 80)
-
-    # Load dataset
-    print("Loading dataset...")
     with open(dataset_path, 'rb') as f:
         dataset = pickle.load(f)
 
-    print(f"Loaded {len(dataset)} samples")
+    print(f"Total samples: {len(dataset)}")
 
     # Get sequence lengths
-    lengths = [(i, len(sample.input_ids), len(sample.attention_mask))
-               for i, sample in enumerate(dataset)]
+    lengths = [len(sample.input_ids) for sample in dataset]
+    length_counts = Counter(lengths)
 
-    # Check if input_ids and attention_mask lengths match
-    mismatched = [(i, id_len, mask_len) for i, id_len, mask_len in lengths if id_len != mask_len]
-    if mismatched:
-        print(f"\nWARNING: Found {len(mismatched)} samples where input_ids and attention_mask lengths don't match!")
-        for i, id_len, mask_len in mismatched[:5]:
-            print(f"  Sample {i}: input_ids={id_len}, attention_mask={mask_len}")
-
-    # Sort by input_ids length
-    lengths_sorted = sorted(lengths, key=lambda x: x[1])
-
-    # Get unique lengths
-    input_id_lengths = [x[1] for x in lengths]
-    length_counts = Counter(input_id_lengths)
-
-    print(f"\nSequence Length Distribution:")
-    print(f"Unique lengths: {len(length_counts)}")
-    print(f"Min length: {min(input_id_lengths)}")
-    print(f"Max length: {max(input_id_lengths)}")
-    print(f"Average length: {np.mean(input_id_lengths):.1f}")
-
-    # Show most common lengths
-    print(f"\nMost common lengths:")
-    for length, count in length_counts.most_common(10):
-        print(f"  Length {length}: {count} samples ({count / len(dataset) * 100:.1f}%)")
-
-    # Initialize tokenizer to decode sequences
-    tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
-
-    print("\n" + "=" * 80)
-    print(f"EXAMINING {num_samples} SHORTEST SAMPLES")
-    print("=" * 80)
-
-    # Examine shortest samples
-    shortest_samples = lengths_sorted[:num_samples]
-    for rank, (idx, length, mask_len) in enumerate(shortest_samples):
-        sample = dataset[idx]
-        print(f"\n[SHORTEST #{rank + 1}] Sample {idx} - Length: {length}")
-        print("-" * 50)
-
-        # Decode the tokens to see the actual text
-        decoded_text = tokenizer.decode(sample.input_ids, skip_special_tokens=False)
-        print(f"Decoded text:")
-        print(f"'{decoded_text}'")
-
-        # Show token IDs
-        print(f"\nToken IDs: {sample.input_ids[:20]}...")  # First 20 tokens
-        print(f"Attention mask: {sample.attention_mask[:20]}...")  # First 20 tokens
-
-        # Check for padding tokens
-        pad_token_id = tokenizer.pad_token_id or 0
-        num_pad_tokens = sample.input_ids.count(pad_token_id)
-        print(f"Number of padding tokens (ID {pad_token_id}): {num_pad_tokens}")
-
-        # Show where padding starts
-        try:
-            first_pad_idx = sample.input_ids.index(pad_token_id)
-            print(f"Padding starts at index: {first_pad_idx}")
-        except ValueError:
-            print("No padding tokens found")
-
-        # Show the label
-        print(f"Label: {sample.label}")
-        print(f"Numerical attributes: {sample.numerical_attributes}")
-
-    print("\n" + "=" * 80)
-    print(f"EXAMINING {num_samples} LONGEST SAMPLES")
-    print("=" * 80)
-
-    # Examine longest samples
-    longest_samples = lengths_sorted[-num_samples:]
-    for rank, (idx, length, mask_len) in enumerate(longest_samples):
-        sample = dataset[idx]
-        print(f"\n[LONGEST #{rank + 1}] Sample {idx} - Length: {length}")
-        print("-" * 50)
-
-        # Decode the tokens to see the actual text
-        decoded_text = tokenizer.decode(sample.input_ids, skip_special_tokens=False)
-        print(f"Decoded text:")
-        print(f"'{decoded_text}'")
-
-        # Show token IDs
-        print(f"\nToken IDs: {sample.input_ids[:20]}...")  # First 20 tokens
-        print(f"Attention mask: {sample.attention_mask[:20]}...")  # First 20 tokens
-
-        # Check for padding tokens
-        pad_token_id = tokenizer.pad_token_id or 0
-        num_pad_tokens = sample.input_ids.count(pad_token_id)
-        print(f"Number of padding tokens (ID {pad_token_id}): {num_pad_tokens}")
-
-        # Show where padding starts
-        try:
-            first_pad_idx = sample.input_ids.index(pad_token_id)
-            print(f"Padding starts at index: {first_pad_idx}")
-        except ValueError:
-            print("No padding tokens found")
-
-        # Show the label
-        print(f"Label: {sample.label}")
-        print(f"Numerical attributes: {sample.numerical_attributes}")
-
-    print("\n" + "=" * 80)
-    print("POTENTIAL ISSUES TO CHECK")
-    print("=" * 80)
-
-    # Check if this could be a batched processing issue
-    if len(length_counts) > 1:
-        print("❌ FOUND VARIABLE LENGTHS - This shouldn't happen with padding='longest'")
-        print("\nPossible causes:")
-        print("1. Dataset was processed in batches with different max lengths")
-        print("2. Dataset was concatenated from multiple preprocessing runs")
-        print("3. Post-processing modified the sequences")
-        print("4. There's a bug in the preprocessing tokenization")
-
-        # Check if lengths follow a pattern that suggests batch processing
-        unique_lengths = sorted(length_counts.keys())
-        print(f"\nUnique lengths: {unique_lengths}")
-
-        # Check if sequences cluster around certain lengths
-        length_gaps = [unique_lengths[i + 1] - unique_lengths[i] for i in range(len(unique_lengths) - 1)]
-        print(f"Gaps between lengths: {length_gaps}")
-
-    else:
-        print("✅ All sequences have the same length - this is expected")
-
-    # Check data types
+    # Get sample structure
     sample = dataset[0]
-    print(f"\nData types in sample:")
-    print(f"  input_ids: {type(sample.input_ids)} (length: {len(sample.input_ids)})")
-    print(f"  attention_mask: {type(sample.attention_mask)} (length: {len(sample.attention_mask)})")
-    print(f"  numerical_attributes: {type(sample.numerical_attributes)}")
-    print(f"  label: {type(sample.label)}")
 
+    stats = {
+        'total_samples': len(dataset),
+        'unique_lengths': len(length_counts),
+        'min_length': min(lengths),
+        'max_length': max(lengths),
+        'avg_length': np.mean(lengths),
+        'std_length': np.std(lengths),
+        'length_distribution': length_counts,
+        'sample_type': type(sample).__name__,
+        'has_orientation': hasattr(sample, 'orientation'),
+        'input_ids_type': type(sample.input_ids),
+        'first_5_lengths': lengths[:5]
+    }
 
-def compare_mri_ct_samples(mri_path: str, ct_path: str):
-    """Compare a few samples from MRI and CT datasets to see the differences."""
+    # Print statistics
+    print(f"Sequence length stats:")
+    print(f"  - Unique lengths: {stats['unique_lengths']}")
+    print(f"  - Min length: {stats['min_length']}")
+    print(f"  - Max length: {stats['max_length']}")
+    print(f"  - Average: {stats['avg_length']:.1f}")
+    print(f"  - Std dev: {stats['std_length']:.1f}")
 
-    print("\n" + "=" * 80)
-    print("COMPARING MRI vs CT SAMPLES")
-    print("=" * 80)
+    print(f"\nSample structure:")
+    print(f"  - Type: {stats['sample_type']}")
+    print(f"  - Has orientation field: {stats['has_orientation']}")
+    print(f"  - input_ids type: {stats['input_ids_type']}")
 
+    # Show length distribution
+    print(f"\nLength distribution (top 10):")
+    for length, count in length_counts.most_common(10):
+        print(f"  Length {length}: {count} samples ({count/len(dataset)*100:.1f}%)")
+
+    # Show sample content
     tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')
+    print(f"\nFirst sample:")
+    print(f"  - Length: {len(sample.input_ids)}")
+    print(f"  - Text: '{tokenizer.decode(sample.input_ids[:50])}...'")
+    print(f"  - Label: {sample.label}")
+    print(f"  - Numerical attrs: {sample.numerical_attributes}")
 
-    # Load both datasets
-    with open(mri_path, 'rb') as f:
-        mri_dataset = pickle.load(f)
+    return stats
 
-    with open(ct_path, 'rb') as f:
-        ct_dataset = pickle.load(f)
 
-    print(f"MRI dataset: {len(mri_dataset)} samples")
-    print(f"CT dataset: {len(ct_dataset)} samples")
+def analyze_batches(batch_dir: str):
+    """Analyze all batches in a directory."""
 
-    # Compare first 3 samples from each
-    for i in range(min(3, len(mri_dataset), len(ct_dataset))):
-        print(f"\n{'-' * 60}")
-        print(f"SAMPLE {i + 1} COMPARISON")
-        print(f"{'-' * 60}")
+    batch_dir = Path(batch_dir)
+    batch_files = sorted(batch_dir.glob("dataset_batch_*.pkl"))
 
-        mri_sample = mri_dataset[i]
-        ct_sample = ct_dataset[i]
+    if not batch_files:
+        print(f"No batch files found in {batch_dir}")
+        return None
 
-        print(f"\nMRI Sample {i}:")
-        print(f"  Length: {len(mri_sample.input_ids)}")
-        mri_text = tokenizer.decode(mri_sample.input_ids, skip_special_tokens=True)
-        print(f"  Text: '{mri_text[:200]}...'")
+    print(f"\n{'='*60}")
+    print(f"Analyzing batches from: {batch_dir}")
+    print(f"Found {len(batch_files)} batch files")
+    print(f"{'='*60}")
 
-        print(f"\nCT Sample {i}:")
-        print(f"  Length: {len(ct_sample.input_ids)}")
-        ct_text = tokenizer.decode(ct_sample.input_ids, skip_special_tokens=True)
-        print(f"  Text: '{ct_text[:200]}...'")
+    all_lengths = []
+    all_samples = []
+    batch_stats = []
+
+    # Analyze each batch
+    for batch_file in tqdm(batch_files, desc="Loading batches"):
+        try:
+            with open(batch_file, 'rb') as f:
+                batch_data = pickle.load(f)
+
+            lengths = [len(sample.input_ids) for sample in batch_data]
+            all_lengths.extend(lengths)
+            all_samples.extend(batch_data[:2])  # Keep first 2 samples from each batch for inspection
+
+            batch_stats.append({
+                'name': batch_file.name,
+                'num_samples': len(batch_data),
+                'unique_lengths': len(set(lengths)),
+                'min_length': min(lengths) if lengths else 0,
+                'max_length': max(lengths) if lengths else 0
+            })
+
+        except Exception as e:
+            print(f"Error loading {batch_file}: {e}")
+
+    # Overall statistics
+    length_counts = Counter(all_lengths)
+
+    stats = {
+        'total_samples': len(all_lengths),
+        'unique_lengths': len(length_counts),
+        'min_length': min(all_lengths) if all_lengths else 0,
+        'max_length': max(all_lengths) if all_lengths else 0,
+        'avg_length': np.mean(all_lengths) if all_lengths else 0,
+        'std_length': np.std(all_lengths) if all_lengths else 0,
+        'length_distribution': length_counts,
+        'sample_type': type(all_samples[0]).__name__ if all_samples else 'Unknown',
+        'has_orientation': hasattr(all_samples[0], 'orientation') if all_samples else False,
+        'input_ids_type': type(all_samples[0].input_ids) if all_samples else None,
+        'batch_stats': batch_stats
+    }
+
+    print(f"\nOverall batch statistics:")
+    print(f"  - Total samples: {stats['total_samples']}")
+    print(f"  - Unique lengths: {stats['unique_lengths']}")
+    print(f"  - Min length: {stats['min_length']}")
+    print(f"  - Max length: {stats['max_length']}")
+    print(f"  - Average: {stats['avg_length']:.1f}")
+    print(f"  - Std dev: {stats['std_length']:.1f}")
+
+    # Show problematic batches
+    variable_batches = [b for b in batch_stats if b['unique_lengths'] > 1]
+    if variable_batches:
+        print(f"\nBatches with variable lengths: {len(variable_batches)}")
+        for batch in variable_batches[:5]:
+            print(f"  - {batch['name']}: {batch['unique_lengths']} unique lengths, range [{batch['min_length']}-{batch['max_length']}]")
+
+    return stats
+
+
+def compare_datasets(working_path: str, batch_dir: str):
+    """Compare working dataset with batched dataset."""
+
+    print("="*80)
+    print("DATASET COMPARISON")
+    print("="*80)
+
+    # Analyze working dataset
+    working_stats = analyze_dataset(working_path, "Working Combined Dataset")
+
+    # Analyze batches
+    batch_stats = analyze_batches(batch_dir)
+
+    if not batch_stats:
+        return
+
+    # Compare
+    print(f"\n{'='*80}")
+    print("COMPARISON RESULTS")
+    print(f"{'='*80}")
+
+    print("\nKey differences:")
+
+    # Length uniformity
+    print(f"\n1. Sequence length uniformity:")
+    print(f"   Working dataset: {'UNIFORM' if working_stats['unique_lengths'] == 1 else 'VARIABLE'} ({working_stats['unique_lengths']} unique lengths)")
+    print(f"   Batched dataset: {'UNIFORM' if batch_stats['unique_lengths'] == 1 else 'VARIABLE'} ({batch_stats['unique_lengths']} unique lengths)")
+
+    # Length ranges
+    print(f"\n2. Length ranges:")
+    print(f"   Working: [{working_stats['min_length']} - {working_stats['max_length']}]")
+    print(f"   Batched: [{batch_stats['min_length']} - {batch_stats['max_length']}]")
+
+    # Data types
+    print(f"\n3. Data types:")
+    print(f"   Working input_ids type: {working_stats['input_ids_type']}")
+    print(f"   Batched input_ids type: {batch_stats['input_ids_type']}")
+
+    # Sample structure
+    print(f"\n4. Sample structure:")
+    print(f"   Working has 'orientation' field: {working_stats['has_orientation']}")
+    print(f"   Batched has 'orientation' field: {batch_stats['has_orientation']}")
+
+    # If working dataset is uniform but batched is not, show the target length
+    if working_stats['unique_lengths'] == 1 and batch_stats['unique_lengths'] > 1:
+        target_length = working_stats['min_length']  # Since all are same
+        print(f"\n⚠️  ISSUE DETECTED:")
+        print(f"   Working dataset has uniform length: {target_length}")
+        print(f"   Batched dataset has variable lengths!")
+        print(f"\n   SOLUTION: Pad all sequences in batches to length {target_length}")
+
+        # Show which batches need fixing
+        if 'batch_stats' in batch_stats:
+            need_fixing = [b for b in batch_stats['batch_stats'] if b['unique_lengths'] > 1 or b['max_length'] != target_length]
+            print(f"\n   Batches that need fixing: {len(need_fixing)}/{len(batch_stats['batch_stats'])}")
+
+
+
 
 
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Investigate dataset sequence lengths")
-    parser.add_argument("--dataset_path", type=str, required=True,
-                        help="Path to dataset pickle file")
-    parser.add_argument("--num_samples", type=int, default=5,
-                        help="Number of shortest/longest samples to examine")
-    parser.add_argument("--compare_with", type=str,
-                        help="Path to another dataset to compare with")
+    parser = argparse.ArgumentParser(description="Compare working dataset with batch files")
+    parser.add_argument("--working", type=str, required=True,
+                        help="Path to working combined dataset")
+    parser.add_argument("--batch_dir", type=str, required=True,
+                        help="Path to batch directory")
 
     args = parser.parse_args()
 
-    investigate_dataset(args.dataset_path, args.num_samples)
-
-    if args.compare_with:
-        compare_mri_ct_samples(args.compare_with, args.dataset_path)
+    # Compare datasets
+    compare_datasets(args.working, args.batch_dir)

@@ -1,13 +1,14 @@
 {
   "data": {
-    "dataset_dir": "/media/e210/portable_hdd/d_tra_analca_bodypart_2",
+    "dataset_dir": "/media/e210/portable_hdd/d_bodypart_final_cleaned",
+    "orientation": "SAG",
     "dataset_name": "fixed_dataset.pkl",
-    "label_dict_name": "bootstrapped_label_dict.json",
+    "label_dict_name": "label_dict_SAG.json",
     "train_split": 0.8,
     "val_split": 0.1,
     "test_split": 0.1,
     "batch_size": 32,
-    "num_workers": 4,
+    "num_workers": 2,
     "pin_memory": true,
     "shuffle": true,
     "class_resample_size": 200,
@@ -38,7 +39,7 @@
     "cache_type": "memory",
     "cache_rate": 1.0,
     "cache_num_workers": 4,
-    "persistent_cache_dir": "./persistent_cache"
+    "persistent_cache_dir": "/media/e210/portable_hdd/d_sag_bpclass/persistent_cache"
   },
   "model": {
     "img_encoder": {
@@ -97,13 +98,13 @@
     "class_weights": "balanced"
   },
   "logging": {
-    "log_dir": "./logs",
+    "log_dir": "/media/e210/portable_hdd/d_sag_bpclass/logs",
     "tensorboard": true,
-    "save_model_dir": "/media/e210/portable_hdd/d_cor_analca_bodypart_2/saved_models",
+    "save_model_dir": "/media/e210/portable_hdd/d_sag_bpclass/saved_models",
     "log_interval": 10,
     "wandb": {
       "enabled": true,
-      "project": "bpclass_cor",
+      "project": "bpclass_sag_new",
       "entity": null,
       "name": null,
       "tags": [],

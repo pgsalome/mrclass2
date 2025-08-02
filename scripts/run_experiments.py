@@ -87,6 +87,7 @@ def update_config_with_params(base_config: Dict[str, Any], param_dict: Dict[str,
 def define_study_params(trial: Trial, high_dim: bool = False) -> Dict[str, Any]:
     """
     Define the parameters for a trial in the Optuna study.
+    Fixed to match the actual config structure.
 
     Args:
         trial: Optuna trial object
@@ -97,72 +98,76 @@ def define_study_params(trial: Trial, high_dim: bool = False) -> Dict[str, Any]:
     """
     params = {}
 
-    # Common parameters (always included)
-    params["model.img.encoder.name"] = trial.suggest_categorical(
-        "model.img.encoder.name", ["resnet18", "resnet50", "densenet121", "efficientnet_b0"]
+    # Model parameters - fixed paths to match config structure
+    params["model.img_encoder.name"] = trial.suggest_categorical(
+        "model.img_encoder.name", ["resnet18", "resnet50", "densenet121", "efficientnet_b0"]
     )
 
-    params["model.img.encoder.freeze.backbone"] = trial.suggest_categorical(
-        "model.img.encoder.freeze.backbone", [True, False]
+    params["model.img_encoder.freeze_backbone"] = trial.suggest_categorical(
+        "model.img_encoder.freeze_backbone", [True, False]
     )
 
-    params["model.txt.encoder.name"] = trial.suggest_categorical(
-        "model.txt.encoder.name", ["distilbert-base-uncased", "bert-base-uncased"]
+    params["model.txt_encoder.name"] = trial.suggest_categorical(
+        "model.txt_encoder.name", ["distilbert-base-uncased", "bert-base-uncased"]
     )
 
     params["model.fusion.method"] = trial.suggest_categorical(
         "model.fusion.method", ["concat", "attention", "gated"]
     )
 
-    params["data.batch.size"] = trial.suggest_categorical(
-        "data.batch.size", [16, 32, 64]
+    # Data parameters - fixed to match config structure
+    params["data.batch_size"] = trial.suggest_categorical(
+        "data.batch_size", [16, 32, 64]
     )
 
+    # Training parameters
     params["training.optimizer.lr"] = trial.suggest_float(
         "training.optimizer.lr", 1e-6, 1e-4, log=True
     )
 
-    params["data.intensity.normalization.enabled"] = trial.suggest_categorical(
-        "data.intensity.normalization.enabled", [True, False]
+    # Intensity normalization - fixed to match config structure
+    params["data.intensity_normalization.enabled"] = trial.suggest_categorical(
+        "data.intensity_normalization.enabled", [True, False]
     )
 
     # Use None as a valid option for normalization method
     method_options = ["zscore", "whitestripe", None]
-    method_idx = trial.suggest_categorical("data.intensity.normalization.method_idx", list(range(len(method_options))))
-    params["data.intensity.normalization.method"] = method_options[method_idx]
+    method_idx = trial.suggest_categorical("data.intensity_normalization.method_idx", list(range(len(method_options))))
+    params["data.intensity_normalization.method"] = method_options[method_idx]
 
+    # Model classifier dropout
     params["model.classifier.dropout"] = trial.suggest_float(
         "model.classifier.dropout", 0.1, 0.5
     )
 
     # Additional parameters for high-dimensional search
     if high_dim:
-        params["model.img.encoder.output_dim"] = trial.suggest_int(
-            "model.img.encoder.output_dim", 256, 1024
+        params["model.img_encoder.output_dim"] = trial.suggest_int(
+            "model.img_encoder.output_dim", 256, 1024
         )
 
-        params["model.txt.encoder.freeze.backbone"] = trial.suggest_categorical(
-            "model.txt.encoder.freeze.backbone", [True, False]
+        params["model.txt_encoder.freeze_backbone"] = trial.suggest_categorical(
+            "model.txt_encoder.freeze_backbone", [True, False]
         )
 
-        params["model.txt.encoder.output_dim"] = trial.suggest_int(
-            "model.txt.encoder.output_dim", 128, 512
+        params["model.txt_encoder.output_dim"] = trial.suggest_int(
+            "model.txt_encoder.output_dim", 128, 512
         )
 
-        params["model.num.encoder.hidden_dim"] = trial.suggest_int(
-            "model.num.encoder.hidden_dim", 32, 256
+        params["model.num_encoder.hidden_dim"] = trial.suggest_int(
+            "model.num_encoder.hidden_dim", 32, 256
         )
 
-        params["model.num.encoder.output_dim"] = trial.suggest_int(
-            "model.num.encoder.output_dim", 16, 128
+        params["model.num_encoder.output_dim"] = trial.suggest_int(
+            "model.num_encoder.output_dim", 16, 128
         )
 
-        params["model.num.encoder.num_layers"] = trial.suggest_int(
-            "model.num.encoder.num_layers", 1, 3
+        params["model.num_encoder.num_layers"] = trial.suggest_int(
+            "model.num_encoder.num_layers", 1, 3
         )
 
-        params["model.num.encoder.dropout"] = trial.suggest_float(
-            "model.num.encoder.dropout", 0.0, 0.5
+        params["model.num_encoder.dropout"] = trial.suggest_float(
+            "model.num_encoder.dropout", 0.0, 0.5
         )
 
         params["model.fusion.hidden_size"] = trial.suggest_int(
@@ -191,47 +196,45 @@ def extract_suggestions_from_config(config_path):
 
     suggestions = {}
 
-    # Extract model.img.encoder.name
-    if "img" in config["model"] and "encoder" in config["model"]["img"]:
-        suggestions["model.img.encoder.name"] = config["model"]["img"]["encoder"].get("name", "resnet18")
+    # Extract model.img_encoder.name (fixed path)
+    if "img_encoder" in config["model"]:
+        suggestions["model.img_encoder.name"] = config["model"]["img_encoder"].get("name", "resnet18")
 
-    # Extract model.img.encoder.freeze.backbone
-    if "img" in config["model"] and "encoder" in config["model"]["img"]:
-        suggestions["model.img.encoder.freeze.backbone"] = config["model"]["img"]["encoder"].get("freeze", {}).get(
-            "backbone", False)
+    # Extract model.img_encoder.freeze_backbone (fixed path)
+    if "img_encoder" in config["model"]:
+        suggestions["model.img_encoder.freeze_backbone"] = config["model"]["img_encoder"].get("freeze_backbone", False)
 
-    # Extract model.txt.encoder.name
-    if "txt" in config["model"] and "encoder" in config["model"]["txt"]:
-        suggestions["model.txt.encoder.name"] = config["model"]["txt"]["encoder"].get("name", "distilbert-base-uncased")
+    # Extract model.txt_encoder.name (fixed path)
+    if "txt_encoder" in config["model"]:
+        suggestions["model.txt_encoder.name"] = config["model"]["txt_encoder"].get("name", "distilbert-base-uncased")
 
     # Extract model.fusion.method
     if "fusion" in config["model"]:
         suggestions["model.fusion.method"] = config["model"]["fusion"].get("method", "concat")
 
-    # Extract data.batch.size
-    if "batch" in config["data"]:
-        suggestions["data.batch.size"] = config["data"]["batch"].get("size", 32)
+    # Extract data.batch_size (fixed path)
+    if "batch_size" in config["data"]:
+        suggestions["data.batch_size"] = config["data"].get("batch_size", 32)
 
     # Extract training.optimizer.lr
     if "optimizer" in config["training"]:
         suggestions["training.optimizer.lr"] = config["training"]["optimizer"].get("lr", 1e-5)
 
-    # Extract data.intensity.normalization.enabled
-    if "intensity" in config["data"]:
-        suggestions["data.intensity.normalization.enabled"] = config["data"]["intensity"].get("normalization", {}).get(
-            "enabled", False)
+    # Extract data.intensity_normalization.enabled (fixed path)
+    if "intensity_normalization" in config["data"]:
+        suggestions["data.intensity_normalization.enabled"] = config["data"]["intensity_normalization"].get("enabled", False)
 
-    # Extract data.intensity.normalization.method
+    # Extract data.intensity_normalization.method
     method = None
-    if "intensity" in config["data"]:
-        method = config["data"]["intensity"].get("normalization", {}).get("method", None)
+    if "intensity_normalization" in config["data"]:
+        method = config["data"]["intensity_normalization"].get("method", None)
 
     # Map method to index
     methods = ["zscore", "whitestripe", None]
     if method in methods:
-        suggestions["data.intensity.normalization.method_idx"] = methods.index(method)
+        suggestions["data.intensity_normalization.method_idx"] = methods.index(method)
     else:
-        suggestions["data.intensity.normalization.method_idx"] = 2  # Default to None
+        suggestions["data.intensity_normalization.method_idx"] = 2  # Default to None
 
     # Extract model.classifier.dropout
     if "classifier" in config["model"]:
@@ -540,9 +543,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Run MRI sequence classification experiments with Bayesian optimization")
     parser.add_argument("--base_config", default="./config/default.json", type=str, help="Path to base config file")
-    parser.add_argument("--output_dir", type=str, default="./config/bayesian_opt_cor_bpclass",
+    parser.add_argument("--output_dir", type=str, default="./config/bayesian_opt_sag_bpclass",
                         help="Directory to save experiment configs")
-    parser.add_argument("--results_file", type=str, default="logs/bayesian_opt_results_bpclass_cor.csv",
+    parser.add_argument("--results_file", type=str, default="logs/bayesian_opt_results_bpclass_sag.csv",
                         help="Path to save experiment results")
     parser.add_argument("--n_trials", type=int, default=20, help="Number of optimization trials")
     parser.add_argument("--random_seed", type=int, default=42, help="Random seed for reproducibility")

@@ -711,7 +711,10 @@ def get_dataset(args: Namespace) -> None:
         found_dirs_in_current_root = 0
 
         for sequence_dir_path in pycurt_dir.glob(glob_pattern):
-            if not sequence_dir_path.is_dir() or "patches" in sequence_dir_path.name:
+            if not (sequence_dir_path.is_dir() or "patches" in sequence_dir_path.name or "RTDOSE" in sequence_dir_path or sequence_dir_path == "PTCT" or "RTSTRUCT" in sequence_dir_path or "RTPLAN" in sequence_dir_path)  :
+                continue
+            dcm_files = list(sequence_dir_path.glob("*.dcm"))
+            if not dcm_files:
                 continue
 
             try:
