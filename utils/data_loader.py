@@ -9,7 +9,6 @@ from torch.utils.data import DataLoader, Dataset, random_split
 import torchvision.transforms as transforms
 from sklearn.model_selection import train_test_split
 from collections import Counter
-from utils.lazy_dataset import create_lazy_datasets
 
 # Original dataset and data structure imports
 from utils.dataclass import encodedSample, MRISequenceDataset
@@ -18,31 +17,6 @@ from models.num_encoder import NumericFeatureNormalizer
 
 # Import MONAI dataset classes for caching
 from utils.monai_dataset import MRIMonaiDataset, MRIPersistentDataset
-
-
-def create_datasets_with_lazy_option(config, hierarchical=False, use_lazy=True):
-    """
-    Create datasets with option for lazy loading.
-
-    Args:
-        config: Configuration dictionary
-        hierarchical: Whether to use hierarchical classification
-        use_lazy: Whether to use lazy loading (default: True)
-
-    Returns:
-        Same as create_datasets() but with lazy loading if enabled
-    """
-    if use_lazy and "orientation" in config["data"]:
-        # Use lazy loading
-        print("Using LAZY LOADING for dataset...")
-        datasets, label_dict, hierarchical_dicts, num_normalizer = create_lazy_datasets(config)
-    else:
-        # Fall back to original implementation
-        print("Using standard (eager) loading for dataset...")
-        from utils.data_loader import create_datasets
-        datasets, label_dict, hierarchical_dicts, num_normalizer = create_datasets(config, hierarchical)
-
-    return datasets, label_dict, hierarchical_dicts, num_normalizer
 
 
 def prepare_transforms(config: Dict[str, Any]) -> Dict[str, transforms.Compose]:

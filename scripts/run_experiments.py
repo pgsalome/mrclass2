@@ -11,10 +11,6 @@ import matplotlib.pyplot as plt
 import re
 import glob
 from utils.dataclass import encodedSample, dicomData
-
-# Import lazy loading dataset
-from utils.lazy_dataset import create_lazy_datasets
-
 # Import Optuna for Bayesian optimization
 import optuna
 from optuna.visualization import plot_optimization_history, plot_param_importances
@@ -27,9 +23,8 @@ from utils.io import read_json_config, ensure_dir, save_json
 from train import train
 
 os.environ["WANDB_DIR"] = "./wandb"
-os.environ['HTTP_PROXY'] = "http://www-int.dkfz-heidelberg.de:80"
-os.environ['HTTPS_PROXY'] = "http://www-int.dkfz-heidelberg.de:80"
-
+os.environ['HTTP_PROXY']="http://www-int.dkfz-heidelberg.de:80"
+os.environ['HTTPS_PROXY']="http://www-int.dkfz-heidelberg.de:80"
 
 # Custom JSON encoder to handle NumPy types
 class NumpyEncoder(json.JSONEncoder):
@@ -228,8 +223,7 @@ def extract_suggestions_from_config(config_path):
 
     # Extract data.intensity_normalization.enabled (fixed path)
     if "intensity_normalization" in config["data"]:
-        suggestions["data.intensity_normalization.enabled"] = config["data"]["intensity_normalization"].get("enabled",
-                                                                                                            False)
+        suggestions["data.intensity_normalization.enabled"] = config["data"]["intensity_normalization"].get("enabled", False)
 
     # Extract data.intensity_normalization.method
     method = None
@@ -301,51 +295,6 @@ def load_previous_trials(results_file, trial_numbers):
     return trial_results
 
 
-def train_with_lazy_loading(config):
-    """
-    Modified train function that uses lazy loading for datasets.
-    This wraps the original train function but creates datasets using lazy loading.
-    """
-    print("\n" + "=" * 60)
-    print("USING LAZY LOADING FOR DATASETS")
-    print("=" * 60 + "\n")
-
-    # Check if the dataset has orientation parameter (batch-based dataset)
-    if "orientation" in config.get("data", {}):
-        # Import necessary components
-        from utils.data_loader import create_dataloaders
-        from models.classifier import get_classifier
-        import torch
-
-        # Create datasets with lazy loading
-        datasets, label_dict, _, num_normalizer = create_lazy_datasets(config)
-
-        # Create dataloaders
-        dataloaders = create_dataloaders(datasets, config)
-
-        # Initialize model
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = get_classifier(config, num_classes=len(label_dict), device=device)
-
-        # Import the actual training function
-        from train import train_model
-
-        # Train model
-        results = train_model(
-            model=model,
-            dataloaders=dataloaders,
-            config=config,
-            device=device,
-            num_normalizer=num_normalizer
-        )
-
-        return results
-    else:
-        # Fall back to original train function for non-batch datasets
-        print("Dataset does not have orientation parameter, using standard loading")
-        return train(config)
-
-
 def run_custom_bayesian_optimization(
         base_config: Dict[str, Any],
         output_dir: str,
@@ -353,8 +302,7 @@ def run_custom_bayesian_optimization(
         n_trials: int = 20,
         random_state: int = 42,
         results_file: str = "experiment_results.csv",
-        high_dim: bool = False,
-        use_lazy_loading: bool = True
+        high_dim: bool = False
 ):
     """
     Simpler implementation that explicitly controls trial numbering.
@@ -368,7 +316,6 @@ def run_custom_bayesian_optimization(
         random_state: Random seed
         results_file: Path to save experiment results
         high_dim: Whether to use high-dimensional search space
-        use_lazy_loading: Whether to use lazy loading for datasets
     """
     # Ensure output directory exists
     ensure_dir(output_dir)
@@ -427,11 +374,6 @@ def run_custom_bayesian_optimization(
     trials_to_run = n_trials - start_trial
     print(f"Will run {trials_to_run} additional trials (from {start_trial} to {n_trials - 1}).")
 
-    if use_lazy_loading:
-        print("\nLazy loading is ENABLED for all trials.")
-    else:
-        print("\nLazy loading is DISABLED.")
-
     if trials_to_run <= 0:
         print("No additional trials needed.")
         return best_config, best_score, new_results
@@ -472,10 +414,6 @@ def run_custom_bayesian_optimization(
             tag_prefix = "resumed_" if resuming else ""
             config["logging"]["wandb"]["tags"].extend([f"{tag_prefix}optimization", f"trial_{trial_num}"])
 
-            # Add lazy loading tag if enabled
-            if use_lazy_loading:
-                config["logging"]["wandb"]["tags"].append("lazy_loading")
-
             # Make sure wandb doesn't try to resume the previous run
             os.environ["WANDB_RESUME"] = "never"
 
@@ -485,11 +423,8 @@ def run_custom_bayesian_optimization(
             json.dump(config, f, indent=2, cls=NumpyEncoder)
 
         try:
-            # Run training with lazy loading if enabled
-            if use_lazy_loading:
-                metrics = train_with_lazy_loading(config)
-            else:
-                metrics = train(config)
+            # Run training
+            metrics = train(config)
 
             # Get the score (F1 score to maximize)
             score = metrics.get("f1", 0)
@@ -503,8 +438,7 @@ def run_custom_bayesian_optimization(
                 "accuracy": metrics.get("accuracy", 0),
                 "precision": metrics.get("precision", 0),
                 "recall": metrics.get("recall", 0),
-                "class_balanced_acc": metrics.get("class_balanced_acc", 0),
-                "lazy_loading": use_lazy_loading
+                "class_balanced_acc": metrics.get("class_balanced_acc", 0)
             }
 
             # Add parameters to results
@@ -546,8 +480,6 @@ def run_custom_bayesian_optimization(
 
         except Exception as e:
             print(f"Error in trial {trial_num}: {str(e)}")
-            import traceback
-            traceback.print_exc()
 
             # Tell Optuna this trial failed
             study.tell(trial, 0.01)  # Severe penalty
@@ -564,7 +496,6 @@ def run_custom_bayesian_optimization(
         "best_parameters": best_params,
         "total_trials": n_trials,
         "resumed_from_trial": start_trial if resuming else None,
-        "lazy_loading_enabled": use_lazy_loading,
         "runtime_info": {
             "start_time": timestamp,
             "end_time": datetime.now().strftime("%Y%m%d_%H%M%S"),
@@ -615,15 +546,13 @@ if __name__ == "__main__":
     parser.add_argument("--base_config", default="./config/default.json", type=str, help="Path to base config file")
     parser.add_argument("--output_dir", type=str, default="./config/bayesian_opt_sag_bpclass",
                         help="Directory to save experiment configs")
-    parser.add_argument("--results_file", type=str,
-                        default="/omics/odcf/analysis/OE0300_projects/imaging_s001/d_bodypart_final_cleaned/bayesian_opt_results_bpclass_sag.csv",
+    parser.add_argument("--results_file", type=str, default="/omics/odcf/analysis/OE0300_projects/imaging_s001/d_bodypart_final_cleaned/bayesian_opt_results_bpclass_sag.csv",
                         help="Path to save experiment results")
     parser.add_argument("--n_trials", type=int, default=20, help="Number of optimization trials")
     parser.add_argument("--random_seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--start_trial", type=int, default=None,
                         help="Trial number to start from (if None, auto-detect)")
     parser.add_argument("--high_dim", action="store_true", help="Use high-dimensional search space")
-    parser.add_argument("--no_lazy_loading", action="store_true", help="Disable lazy loading (use standard loading)")
     args = parser.parse_args()
 
     # Load base configuration
@@ -639,9 +568,6 @@ if __name__ == "__main__":
 
     print(f"Starting from trial {start_trial}")
 
-    # Determine if lazy loading should be used
-    use_lazy_loading = not args.no_lazy_loading
-
     # Run custom Bayesian optimization
     best_config, best_score, results = run_custom_bayesian_optimization(
         base_config=base_config,
@@ -650,8 +576,7 @@ if __name__ == "__main__":
         n_trials=args.n_trials,
         random_state=args.random_seed,
         results_file=args.results_file,
-        high_dim=args.high_dim,
-        use_lazy_loading=use_lazy_loading
+        high_dim=args.high_dim
     )
 
     print("\nBayesian optimization completed.")
