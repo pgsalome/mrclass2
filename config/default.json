@@ -1,6 +1,6 @@
 {
   "data": {
-    "dataset_dir": "/media/e210/portable_hdd/d_bodypart_final_cleaned",
+    "dataset_dir": "/omics/odcf/analysis/OE0300_projects/imaging_s001/d_bodypart_final_cleaned",
     "orientation": "SAG",
     "dataset_name": "fixed_dataset.pkl",
     "label_dict_name": "label_dict_SAG.json",
@@ -39,7 +39,7 @@
     "cache_type": "memory",
     "cache_rate": 1.0,
     "cache_num_workers": 4,
-    "persistent_cache_dir": "/media/e210/portable_hdd/d_sag_bpclass/persistent_cache"
+    "persistent_cache_dir": "/omics/odcf/analysis/OE0300_projects/imaging_s001/d_bodypart_final_cleaned/persistent_cache"
   },
   "model": {
     "img_encoder": {
@@ -98,13 +98,13 @@
     "class_weights": "balanced"
   },
   "logging": {
-    "log_dir": "/media/e210/portable_hdd/d_sag_bpclass/logs",
+    "log_dir": "/omics/odcf/analysis/OE0300_projects/imaging_s001/d_bodypart_final_cleaned/logs",
     "tensorboard": true,
-    "save_model_dir": "/media/e210/portable_hdd/d_sag_bpclass/saved_models",
+    "save_model_dir": "/omics/odcf/analysis/OE0300_projects/imaging_s001/d_bodypart_final_cleaned/saved_models",
     "log_interval": 10,
     "wandb": {
       "enabled": true,
-      "project": "bpclass_sag_new",
+      "project": "bpclass_sag_odcf",
       "entity": null,
       "name": null,
       "tags": [],
