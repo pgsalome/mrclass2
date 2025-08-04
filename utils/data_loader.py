@@ -19,7 +19,7 @@ from models.num_encoder import NumericFeatureNormalizer
 from utils.monai_dataset import MRIMonaiDataset, MRIPersistentDataset
 
 # Import lazy loading support
-from utils.lazy_dataset_stratified import create_lazy_datasets
+from utils.lazy_dataset import (create_lazy_datasets)
 
 
 def prepare_transforms(config: Dict[str, Any]) -> Dict[str, transforms.Compose]:
