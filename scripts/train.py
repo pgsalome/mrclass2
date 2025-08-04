@@ -633,13 +633,12 @@ def train(config: dict):
         use_monai = config["data"].get("use_monai", True)
         cache_type = config["data"].get("cache_type", "memory")
 
-        datasets, label_dict, hierarchical_dicts, num_normalizer = create_datasets(
+        datasets, label_dict, hierarchical_dicts, normalizer = create_datasets_with_lazy_support(
             config,
-            hierarchical,
-            use_monai=use_monai,
-            cache_type=cache_type
+            hierarchical=config.get("hierarchical", False),
+            use_monai=config.get("use_monai", True),
+            cache_type=config.get("cache_type", "memory")
         )
-        dataloaders = create_dataloaders(datasets, config)
 
     # Prepare model
     num_classes = len(label_dict)

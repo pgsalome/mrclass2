@@ -2,8 +2,9 @@
   "data": {
     "dataset_dir": "/omics/odcf/analysis/OE0300_projects/imaging_s001/d_bodypart_final_cleaned",
     "orientation": "SAG",
-    "dataset_name": "fixed_dataset.pkl",
+    "dataset_name": "dataset_sag.pkl",
     "label_dict_name": "label_dict_SAG.json",
+    "merge_chunk_size": 10000,
     "train_split": 0.8,
     "val_split": 0.1,
     "test_split": 0.1,

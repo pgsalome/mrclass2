@@ -18,6 +18,9 @@ from models.num_encoder import NumericFeatureNormalizer
 # Import MONAI dataset classes for caching
 from utils.monai_dataset import MRIMonaiDataset, MRIPersistentDataset
 
+# Import lazy loading support
+from utils.lazy_dataset_stratified import create_lazy_datasets
+
 
 def prepare_transforms(config: Dict[str, Any]) -> Dict[str, transforms.Compose]:
     """
@@ -62,13 +65,14 @@ def prepare_transforms(config: Dict[str, Any]) -> Dict[str, transforms.Compose]:
 def load_dataset(config: Dict[str, Any]) -> Tuple[List[encodedSample], Dict[str, int]]:
     """
     Load the encoded dataset and corresponding label dictionary.
+    Now supports both single merged files and lazy loading from batches.
 
     Args:
         config: Configuration dictionary with paths for the dataset and label dictionary.
 
     Returns:
         Tuple containing:
-        - List of encodedSample objects
+        - List of encodedSample objects (empty list for lazy loading)
         - Dictionary mapping label names to indices
     """
     print(f"DEBUG: load_dataset called")
@@ -78,78 +82,166 @@ def load_dataset(config: Dict[str, Any]) -> Tuple[List[encodedSample], Dict[str,
 
     data_dir = Path(config["data"]["dataset_dir"])
 
+    # First, check if a single dataset file is specified and exists
+    if "dataset_name" in config["data"]:
+        dataset_file = data_dir / config["data"]["dataset_name"]
+
+        if dataset_file.exists():
+            print(f"Loading dataset from single file: {dataset_file}")
+
+            # Load dataset from pickle file
+            dataset = load_pickle(str(dataset_file))
+
+            # Load label dictionary
+            orientation = config["data"].get("orientation", "")
+            if orientation:
+                # Try multiple possible locations for label dictionary
+                label_dict_paths = [
+                    data_dir / f"label_dict_{orientation}.json",
+                    data_dir / orientation / f"label_dict_{orientation}.json"
+                ]
+                label_dict_path = None
+                for path in label_dict_paths:
+                    if path.exists():
+                        label_dict_path = path
+                        break
+
+                if not label_dict_path:
+                    raise FileNotFoundError(f"Label dictionary not found in any expected location")
+            else:
+                label_dict_path = data_dir / config["data"]["label_dict_name"]
+
+            if not label_dict_path.exists():
+                raise FileNotFoundError(f"Label dictionary not found: {label_dict_path}")
+
+            with open(label_dict_path, 'r') as f:
+                label_dict = json.load(f)
+
+            print(f"Loaded {len(dataset)} samples from merged file")
+            return dataset, label_dict
+
     # Check if we're loading from batches
     if "orientation" in config["data"]:
-        # Load from batches
         orientation = config["data"]["orientation"]
+
+        # Check if a merged file exists for this orientation
+        merged_file = data_dir / f"dataset_{orientation}.pkl"
+
+        if merged_file.exists():
+            print(f"Found existing merged file: {merged_file}")
+            print(f"Loading merged dataset...")
+
+            # Load the merged dataset
+            dataset = load_pickle(str(merged_file))
+
+            # Load label dictionary
+            label_dict_paths = [
+                data_dir / f"label_dict_{orientation}.json",
+                data_dir / orientation / f"label_dict_{orientation}.json"
+            ]
+            label_dict_path = None
+            for path in label_dict_paths:
+                if path.exists():
+                    label_dict_path = path
+                    break
+
+            if not label_dict_path:
+                raise FileNotFoundError(f"Label dictionary not found in any expected location")
+
+            with open(label_dict_path, 'r') as f:
+                label_dict = json.load(f)
+
+            print(f"Loaded {len(dataset)} samples from merged file")
+            return dataset, label_dict
+
+        # No merged file exists, check for batches
         batches_dir = data_dir / orientation / "batches"
 
-        if not batches_dir.exists():
-            raise FileNotFoundError(f"Batches directory not found: {batches_dir}")
+        if batches_dir.exists():
+            print(f"No merged file found. Will use lazy loading from batches.")
+            print(f"Batches directory: {batches_dir}")
 
-        # Load all batch files
-        full_dataset = []
-        batch_files = sorted(batches_dir.glob("dataset_batch_*.pkl"))
+            # Check if we should load all batches into memory (old behavior)
+            if config["data"].get("load_batches_to_memory", False):
+                # Original batch loading code
+                full_dataset = []
+                batch_files = sorted(batches_dir.glob("dataset_batch_*.pkl"))
 
-        if not batch_files:
-            raise FileNotFoundError(f"No batch files found in {batches_dir}")
+                if not batch_files:
+                    raise FileNotFoundError(f"No batch files found in {batches_dir}")
 
-        print(f"Loading {len(batch_files)} batch files from {batches_dir}...")
-        from tqdm import tqdm
-        for batch_file in tqdm(batch_files, desc="Loading batches"):
-            with open(batch_file, 'rb') as f:
-                batch_data = pickle.load(f)
-                full_dataset.extend(batch_data)
+                print(f"Loading {len(batch_files)} batch files from {batches_dir}...")
+                from tqdm import tqdm
+                for batch_file in tqdm(batch_files, desc="Loading batches"):
+                    with open(batch_file, 'rb') as f:
+                        batch_data = pickle.load(f)
+                        full_dataset.extend(batch_data)
 
-        print(f"Loaded {len(full_dataset)} samples total")
+                print(f"Loaded {len(full_dataset)} samples total")
 
-        # FIX: Pad all sequences to the same length
-        print("Fixing sequence lengths...")
+                # FIX: Pad all sequences to the same length
+                print("Fixing sequence lengths...")
 
-        # Find max length
-        max_length = max(len(sample.input_ids) for sample in full_dataset)
-        print(f"Max sequence length found: {max_length}")
+                # Find max length
+                max_length = max(len(sample.input_ids) for sample in full_dataset)
+                print(f"Max sequence length found: {max_length}")
 
-        # Get tokenizer for padding token
-        from transformers import AutoTokenizer
-        tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')  # or distilbert-base-uncased
-        pad_token_id = tokenizer.pad_token_id or 0
+                # Get tokenizer for padding token
+                from transformers import AutoTokenizer
+                tokenizer = AutoTokenizer.from_pretrained('bert-base-uncased')  # or distilbert-base-uncased
+                pad_token_id = tokenizer.pad_token_id or 0
 
-        # Pad all sequences
-        for sample in tqdm(full_dataset, desc="Padding sequences"):
-            current_length = len(sample.input_ids)
-            if current_length < max_length:
-                padding_length = max_length - current_length
-                # Pad with lists (since that's what your working dataset uses)
-                sample.input_ids = sample.input_ids + [pad_token_id] * padding_length
-                sample.attention_mask = sample.attention_mask + [0] * padding_length
+                # Pad all sequences
+                for sample in tqdm(full_dataset, desc="Padding sequences"):
+                    current_length = len(sample.input_ids)
+                    if current_length < max_length:
+                        padding_length = max_length - current_length
+                        # Pad with lists (since that's what your working dataset uses)
+                        sample.input_ids = sample.input_ids + [pad_token_id] * padding_length
+                        sample.attention_mask = sample.attention_mask + [0] * padding_length
 
-        # Verify all sequences now have the same length
-        lengths = set(len(sample.input_ids) for sample in full_dataset[:100])
-        print(f"Sequence lengths after padding (first 100): {lengths}")
+                # Verify all sequences now have the same length
+                lengths = set(len(sample.input_ids) for sample in full_dataset[:100])
+                print(f"Sequence lengths after padding (first 100): {lengths}")
 
-        # Load label dictionary
-        label_dict_path = data_dir / orientation / f"label_dict_{orientation}.json"
-        if not label_dict_path.exists():
-            raise FileNotFoundError(f"Label dictionary not found: {label_dict_path}")
+                # Load label dictionary
+                label_dict_path = data_dir / orientation / f"label_dict_{orientation}.json"
+                if not label_dict_path.exists():
+                    raise FileNotFoundError(f"Label dictionary not found: {label_dict_path}")
 
-        with open(label_dict_path, 'r') as f:
-            label_dict = json.load(f)
+                with open(label_dict_path, 'r') as f:
+                    label_dict = json.load(f)
 
-        return full_dataset, label_dict
-    else:
-        # Original single file loading
-        dataset_path = data_dir / config["data"]["dataset_name"]
-        label_dict_path = data_dir / config["data"]["label_dict_name"]
+                return full_dataset, label_dict
+            else:
+                # Return empty dataset to signal lazy loading should be used
+                # Load label dictionary
+                label_dict_path = data_dir / orientation / f"label_dict_{orientation}.json"
+                if not label_dict_path.exists():
+                    raise FileNotFoundError(f"Label dictionary not found: {label_dict_path}")
 
-        # Load dataset from pickle file
-        dataset = load_pickle(str(dataset_path))
+                with open(label_dict_path, 'r') as f:
+                    label_dict = json.load(f)
 
-        # Load label dictionary from JSON file
-        with open(label_dict_path, 'r') as f:
-            label_dict = json.load(f)
+                return [], label_dict  # Empty list signals to use lazy loading
 
-        return dataset, label_dict
+    # Original single file loading (fallback)
+    dataset_path = data_dir / config["data"]["dataset_name"]
+    label_dict_path = data_dir / config["data"]["label_dict_name"]
+
+    if not dataset_path.exists():
+        raise FileNotFoundError(f"Dataset not found: {dataset_path}")
+
+    # Load dataset from pickle file
+    dataset = load_pickle(str(dataset_path))
+
+    # Load label dictionary from JSON file
+    with open(label_dict_path, 'r') as f:
+        label_dict = json.load(f)
+
+    return dataset, label_dict
+
+
 def prepare_hierarchical_labels(
         dataset: List[encodedSample],
         label_dict: Dict[str, int]
@@ -426,9 +518,60 @@ def create_datasets(
             )
         }
 
-    print(f"Dataset splits: train={len(datasets_obj['train'])}, val={len(datasets_obj['val'])}, test={len(datasets_obj['test'])}")
+    print(
+        f"Dataset splits: train={len(datasets_obj['train'])}, val={len(datasets_obj['val'])}, test={len(datasets_obj['test'])}")
 
     return datasets_obj, label_dict, hierarchical_dicts, num_normalizer
+
+
+def create_datasets_with_lazy_support(
+        config: Dict[str, Any],
+        hierarchical: bool = False,
+        use_monai: bool = True,
+        cache_type: str = "memory"
+) -> Tuple[
+    Dict[str, Union[MRIMonaiDataset, MRISequenceDataset]], Dict[str, int],
+    Optional[Dict[str, Dict[str, int]]], NumericFeatureNormalizer]:
+    """
+    Create datasets with support for lazy loading when needed.
+
+    This is a wrapper around the existing create_datasets function that
+    checks if lazy loading should be used.
+
+    Args:
+        config: Configuration dictionary.
+        hierarchical: Whether to prepare hierarchical labels.
+        use_monai: Flag to select MONAI dataset implementations.
+        cache_type: Caching strategy ("memory", "disk", "none").
+
+    Returns:
+        A tuple containing:
+          - Dictionary mapping split names to dataset objects.
+          - Label dictionary.
+          - Hierarchical label dictionaries (if hierarchical=True).
+          - Numeric feature normalizer.
+    """
+
+    # Try to load dataset
+    dataset, label_dict = load_dataset(config)
+
+    # Check if we should use lazy loading (empty dataset returned)
+    if len(dataset) == 0 and "orientation" in config["data"]:
+        print("Using lazy loading approach...")
+
+        # Use lazy dataset creation
+        datasets, label_dict, num_normalizer = create_lazy_datasets(config)
+
+        # Return with empty hierarchical_dicts for compatibility
+        hierarchical_dicts = None
+        if hierarchical:
+            print("Warning: Hierarchical labels not yet implemented for lazy loading")
+
+        return datasets, label_dict, hierarchical_dicts, num_normalizer
+
+    # Otherwise use the traditional approach
+    print("Using traditional dataset loading...")
+    return create_datasets(config, hierarchical, use_monai, cache_type)
 
 
 def create_dataloaders(
@@ -456,21 +599,24 @@ def create_dataloaders(
             batch_size=batch_size,
             shuffle=config["data"]["shuffle"],
             num_workers=num_workers,
-            pin_memory=pin_memory
+            pin_memory=pin_memory,
+            persistent_workers=config["data"].get("persistent_workers", False)
         ),
         "val": DataLoader(
             datasets["val"],
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
-            pin_memory=pin_memory
+            pin_memory=pin_memory,
+            persistent_workers=config["data"].get("persistent_workers", False)
         ),
         "test": DataLoader(
             datasets["test"],
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
-            pin_memory=pin_memory
+            pin_memory=pin_memory,
+            persistent_workers=config["data"].get("persistent_workers", False)
         )
     }
 
